@@ -1,9 +1,11 @@
 # Known issues
 
 Bugs and latent defects found while running a full `ruff` lint pass over the
-repository. **None of them are fixed.** Every entry here was left alone because
-fixing it would change runtime behaviour, which was out of scope for a lint
-pass — the lint work itself was required to be behaviour-preserving.
+repository, and later while taking the test suite to 100% line and branch
+coverage. **None of them are fixed.** Every entry here was left alone because
+fixing it would change runtime behaviour, which was out of scope for both
+passes — the lint work itself was required to be behaviour-preserving, and the
+coverage work was required to add tests, not to change the library.
 
 Line numbers refer to the tree as of the lint pass and were each verified
 against the source, not inferred from the rule that surfaced them. The
@@ -372,6 +374,101 @@ string. What it actually verifies is "the command string is built verbatim,
 valid or not", which is a reasonable thing to test but not what the name claims.
 
 **Fix:** rename it, or assert the failure it implies.
+
+---
+
+## Found during the coverage pass (`src/pexpect/`)
+
+These four came out of taking the suite to 100% coverage: each is a line or
+branch that the tests could not reach by using the documented API.
+
+### 25. `spawn.waitnoecho(timeout=None)` raises `TypeError`
+
+**`src/pexpect/pty_spawn.py:435`**
+
+```python
+if timeout < 0 and timeout is not None:
+```
+
+The two halves of the guard are the wrong way round. With `timeout=None` — which
+the docstring documents as "block until ECHO flag is False" — the comparison
+`None < 0` raises `TypeError: '<' not supported between instances of 'NoneType'
+and 'int'` before the `is not None` half can short-circuit it.
+
+The crash only shows up when echo is still on, because the loop returns at the
+`getecho()` check above it on the first pass otherwise. That is why
+`waitnoecho(timeout=None)` appears to work: every current caller happens to be
+past the point where the child has already turned echo off.
+
+The knock-on effect is that the `if timeout is not None:` branch two lines below
+can never take its false arm, so it carries a `# pragma: no branch` pointing
+here.
+
+**Fix:** swap the operands to `if timeout is not None and timeout < 0:`.
+
+### 26. `spawn.expect_loop()` does not honour the `-1` timeout sentinel
+
+**`src/pexpect/spawnbase.py:498`**
+
+```python
+def expect_loop(self, searcher, timeout=-1, searchwindowsize=-1):
+    exp = Expecter(self, searcher, searchwindowsize)
+    return exp.expect_loop(timeout)
+```
+
+Every other entry point (`expect`, `expect_list`, `expect_exact`,
+`read_nonblocking`) starts with `if timeout == -1: timeout = self.timeout`.
+This one does not, so the documented "-1 means use the spawn default" contract
+does not hold: the `-1` is passed straight through as a deadline that has
+already passed, and the call raises `TIMEOUT` as soon as the buffer misses.
+
+`tests/test_expect.py::test_expect_loop` therefore has to pass an explicit
+timeout, and says so.
+
+**Fix:** add the same `if timeout == -1: timeout = self.timeout` line.
+
+### 27. `PopenSpawn._read_incoming()` logs an exception object to a byte stream
+
+**`src/pexpect/popen_spawn.py:142`**
+
+```python
+except OSError as e:
+    self._log(e, "read")
+```
+
+`_log()` writes its first argument straight to `logfile` and `logfile_read`,
+both of which are byte or text streams. Passing the `OSError` itself raises
+`TypeError: a bytes-like object is required, not 'OSError'` from inside the
+reader thread, which then dies without queueing the `None` sentinel that marks
+the end of the child's output — so every later read waits for data that will
+never come.
+
+Without a logfile set, `_log()` does nothing and the error is silently
+swallowed, which is why this has gone unnoticed.
+
+**Fix:** log `str(e)` encoded for the stream in use, or drop the call.
+
+### 28. The post-EOF drain in `PopenSpawn.read_nonblocking()` is unreachable
+
+**`src/pexpect/popen_spawn.py:103`**
+
+```python
+if self._read_reached_eof:
+    if buf:
+        self._buf = buf[size:]
+        return buf[:size]
+```
+
+`_read_reached_eof` is only ever set inside the read loop below, and the loop
+consumes the `None` sentinel that sets it only while `len(buf) < size`. So
+whenever the flag goes up, `buf[size:]` is empty and nothing is left to hand
+out on the next call. The guard can only fire if something outside the class
+seeds `_buf`, which is what
+`tests/test_popen_spawn.py::test_read_after_eof_drains_the_buffer` does, and
+says so.
+
+Not a bug in itself — the branch is a sensible guard — but it is dead code as
+written.
 
 ---
 
