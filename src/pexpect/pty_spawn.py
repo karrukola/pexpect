@@ -434,7 +434,10 @@ class spawn(SpawnBase):
                 return True
             if timeout < 0 and timeout is not None:
                 return False
-            if timeout is not None:
+            # timeout is never None here: the guard above compares it against 0
+            # first, so a None timeout raises TypeError before this line. See
+            # docs/issues.md.
+            if timeout is not None:  # pragma: no branch
                 timeout = end_time - time.time()
             time.sleep(0.1)
 
