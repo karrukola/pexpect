@@ -50,6 +50,7 @@ classifiers = [
 
 [dependency-groups]
 dev = [
+    "covdefaults>=2.3.0",
     "coverage>=7.16.0",
     "coveralls>=4.1.0",
     "nox>=2026.8.17",
@@ -77,9 +78,28 @@ python-preference = "only-system"
 url = "https://pypi.org/simple"
 default = true
 
-[tool.coverage.run]
-source = ["pexpect"]
-parallel = true
+
+[tool.coverage]
+run.omit = [  "noxfile.py" ]
+run.parallel = true
+run.plugins = [ "covdefaults" ]
+run.source = ["pexpect"]
+# ref: https://coverage.readthedocs.io/en/latest/excluding.html
+report.exclude_also = [
+    "@(abc\\.)?abstractmethod",
+    "class .*\\bProtocol\\):",
+    "def __repr__",
+    "if __name__ == .__main__.:",
+    "if 0:",
+    "if self.debug:",
+    "if settings.DEBUG",
+    "if TYPE_CHECKING:",
+    "raise AssertionError",
+    "raise NotImplementedError",
+]
+report.fail_under = 100
+xml.output = "coverage-reports/coverage-report.xml"
+
 
 
 
