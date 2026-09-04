@@ -55,6 +55,7 @@ dev = [
     "pytest>=9.1.1",
     "pytest-cov>=7.1.0",
     "pytest-html>=4.2.0",
+    "ruff>=0.16.6",
 ]
 
 
@@ -78,3 +79,30 @@ default = true
 [tool.coverage.run]
 source = "pexpect"
 parallel = true
+
+
+
+[tool.ruff]
+target-version = "py310"  # as per README
+line-length = 99
+format.docstring-code-format = true
+lint.select = [ "ALL" ]
+lint.ignore = [
+    "COM812", # conflict with autoformatter
+    "D203",   # conflict with autoformatter,
+    "D213",   # conflict with autoformatter
+    # ignore for now
+    "FIX001", # used as a placeholder for further work
+    "FIX002", # TODOs are not blockers
+    "ISC001", # conflict with autoformatter
+    "SLF001", # accessing protected members
+    "T201",   # allow usage of print
+    "TD",     # one-man shop here
+]
+lint.fixable = [ "ALL" ]
+lint.unfixable = [
+    "F401", # we must know why we are not using the imported module
+]
+lint.per-file-ignores."tests/*" = [
+    "S101",   # pytest works with assert
+]
