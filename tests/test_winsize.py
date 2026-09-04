@@ -55,6 +55,17 @@ class TestCaseWinsize(pexpect_test_case.PexpectTestCase):
         p.expect_exact("SIGWINCH: (19, 84)")
         p.close()
 
+    def test_getwinsize(self) -> None:
+        """Read back the window dimensions of the child pty.
+
+        Given a spawn created with explicit dimensions,
+        When :meth:`pexpect.spawn.getwinsize` is called,
+        Then it returns those dimensions as a (rows, cols) tuple.
+        """
+        p = pexpect.spawn(f"{self.PYTHONBIN} sigwinch_report.py", timeout=3, dimensions=(40, 100))
+        assert p.getwinsize() == (40, 100)
+        p.close()
+
 
 if __name__ == "__main__":
     unittest.main()
