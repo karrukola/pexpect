@@ -68,7 +68,7 @@ class PopenSpawn(SpawnBase):
             "env": env,
         }
 
-        if sys.platform == "win32":
+        if sys.platform == "win32":  # pragma: win32 cover
             startupinfo = subprocess.STARTUPINFO()
             startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
             kwargs["startupinfo"] = startupinfo
@@ -201,7 +201,7 @@ class PopenSpawn(SpawnBase):
 
         Use constants from the :mod:`signal` module to specify which signal.
         """
-        if sys.platform == "win32":
+        if sys.platform == "win32":  # pragma: win32 cover
             if sig in [signal.SIGINT, signal.CTRL_C_EVENT]:
                 sig = signal.CTRL_C_EVENT
             elif sig in [signal.SIGBREAK, signal.CTRL_BREAK_EVENT]:
