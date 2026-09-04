@@ -474,13 +474,12 @@ class SpawnBase:
         if isinstance(pattern_list, self.allowed_string_types) or pattern_list in (TIMEOUT, EOF):
             pattern_list = [pattern_list]
 
-        def prepare_pattern(pattern: _Pattern) -> str | bytes | type[EOF | TIMEOUT] | None:
+        def prepare_pattern(pattern: _Pattern) -> str | bytes | type[EOF | TIMEOUT]:
             if pattern in (TIMEOUT, EOF):
                 return pattern
-            if isinstance(pattern, self.allowed_string_types):
-                return self._coerce_expect_string(pattern)
-            self._pattern_type_err(pattern)
-            return None
+            if not isinstance(pattern, self.allowed_string_types):
+                self._pattern_type_err(pattern)
+            return self._coerce_expect_string(pattern)
 
         try:
             patterns = iter(pattern_list)
