@@ -285,6 +285,154 @@ class ScreenTestCase(pexpect_test_case.PexpectTestCase):
 
         assert str(s) == "A \n D"
 
+    def test_fill_with_bytes(self) -> None:
+        """Fill the screen and a region with characters supplied as bytes.
+
+        Given a screen whose encoding is the default latin-1,
+        When :meth:`screen.screen.fill` and :meth:`screen.screen.fill_region`
+        are called with bytes,
+        Then the bytes are decoded and the decoded character fills the area.
+        """
+        s = screen.screen(2, 2)
+        s.fill(b"\xe4")
+        assert str(s) == "\xe4\xe4\n\xe4\xe4"
+
+        s.fill_region(1, 1, 1, 2, b"\xf6")
+        assert str(s) == "\xf6\xf6\n\xe4\xe4"
+
+    def test_put_at_cursor(self) -> None:
+        """Put characters at the cursor position rather than at absolute coordinates.
+
+        Given a blank screen with the cursor moved to row 2, column 2,
+        When :meth:`screen.screen.put` is called with a str and then with bytes,
+        Then each character lands at the cursor position, decoding bytes on the way.
+        """
+        s = screen.screen(2, 2)
+        s.cursor_home(2, 2)
+        s.put("A")
+        assert s.get_abs(2, 2) == "A"
+
+        s.put(b"\xe4")
+        assert s.get_abs(2, 2) == "\xe4"
+
+    def test_insert_with_bytes(self) -> None:
+        """Insert characters supplied as bytes, absolutely and at the cursor.
+
+        Given a screen filled with dots,
+        When :meth:`screen.screen.insert_abs` and :meth:`screen.screen.insert`
+        are called with bytes,
+        Then the bytes are decoded and inserted, shifting the row to the right.
+        """
+        s = screen.screen(1, 3)
+        s.fill(".")
+        s.insert_abs(1, 1, b"\xe4")
+        assert str(s) == "\xe4.."
+
+        s.cursor_home(1, 1)
+        s.insert(b"\xf6")
+        assert str(s) == "\xf6\xe4."
+
+    def test_get_region_with_reversed_bounds(self) -> None:
+        """Read a region whose start coordinates are past its end coordinates.
+
+        Given a 10x10 screen with known content,
+        When :meth:`screen.screen.get_region` is passed the corners in reverse
+        order, so that the start row and column are greater than the end ones,
+        Then the corners are swapped and the same region is returned.
+        """
+        s = self.make_screen_with_put()
+        assert s.get_region(7, 9, 4, 4) == s.get_region(4, 4, 7, 9)
+
+    def test_newline(self) -> None:
+        """Advance to the start of the next row with newline.
+
+        Given a blank screen with the cursor at row 1, column 2,
+        When :meth:`screen.screen.newline` is called,
+        Then the cursor moves to row 2, column 1.
+        """
+        s = screen.screen(2, 2)
+        s.cursor_home(1, 2)
+        s.newline()
+        assert (s.cur_r, s.cur_c) == (2, 1)
+
+    def test_cursor_up_reverse_without_scrolling(self) -> None:
+        """Move the cursor up without scrolling when it is not on the top row.
+
+        Given a screen whose rows hold distinct content and whose cursor is on
+        row 2,
+        When :meth:`screen.screen.cursor_up_reverse` is called,
+        Then the cursor moves to row 1 and the screen content is unchanged.
+        """
+        s = screen.screen(2, 2)
+        s.fill_region(1, 1, 1, 2, "a")
+        s.fill_region(2, 1, 2, 2, "b")
+        s.cursor_home(2, 1)
+        s.cursor_up_reverse()
+        assert s.cur_r == 1
+        assert str(s) == "aa\nbb"
+
+    def test_cursor_force_position(self) -> None:
+        """Move the cursor with the force-position alias of cursor home.
+
+        Given a blank 5x5 screen,
+        When :meth:`screen.screen.cursor_force_position` is called with row 3
+        and column 4,
+        Then the cursor sits at row 3, column 4.
+        """
+        s = screen.screen(5, 5)
+        s.cursor_force_position(3, 4)
+        assert (s.cur_r, s.cur_c) == (3, 4)
+
+    def test_scroll_screen_rows_are_constrained(self) -> None:
+        """Clamp a scrolling region that reaches outside the screen.
+
+        Given a 5-row screen,
+        When :meth:`screen.screen.scroll_screen_rows` is called with a start row
+        of 0 and an end row of 99,
+        Then the region is clamped to the first and last rows of the screen.
+        """
+        s = screen.screen(5, 5)
+        s.scroll_screen_rows(0, 99)
+        assert (s.scroll_row_start, s.scroll_row_end) == (1, 5)
+
+    def test_scroll_screen_restores_full_region(self) -> None:
+        """Re-enable scrolling over the whole screen.
+
+        Given a 5-row screen whose scrolling region was narrowed to rows 2 to 3,
+        When :meth:`screen.screen.scroll_screen` is called,
+        Then the scrolling region covers every row again.
+        """
+        s = screen.screen(5, 5)
+        s.scroll_screen_rows(2, 3)
+        s.scroll_screen()
+        assert (s.scroll_row_start, s.scroll_row_end) == (1, 5)
+
+    def test_erase_start_of_line(self) -> None:
+        """Erase from the cursor back to the start of its row.
+
+        Given a single-row screen filled with dots and the cursor at column 2,
+        When :meth:`screen.screen.erase_start_of_line` is called,
+        Then the columns up to and including the cursor become spaces.
+        """
+        s = screen.screen(1, 4)
+        s.fill(".")
+        s.cursor_home(1, 2)
+        s.erase_start_of_line()
+        assert str(s) == "  .."
+
+    def test_erase_up(self) -> None:
+        """Erase from the cursor up to the top of the screen.
+
+        Given a 3x2 screen filled with dots and the cursor at row 2, column 1,
+        When :meth:`screen.screen.erase_up` is called,
+        Then row 1 and the start of row 2 become spaces and row 3 is untouched.
+        """
+        s = screen.screen(3, 2)
+        s.fill(".")
+        s.cursor_home(2, 1)
+        s.erase_up()
+        assert str(s) == "  \n .\n.."
+
 
 if __name__ == "__main__":
     unittest.main()
