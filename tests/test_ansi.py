@@ -230,6 +230,175 @@ class AnsiTestCase(pexpect_test_case.PexpectTestCase):
         assert s.get_abs(1, 1) == "\ufffd"
         assert s.get_region(1, 1, 1, 5) == ["\ufffd    "]
 
+    def test_cursor_movement_escapes(self) -> None:
+        """Move the cursor with the relative cursor movement escape sequences.
+
+        Given a 5x5 ANSI terminal with the cursor at the home position,
+        When the sequences for cursor down, forward, back and up are written,
+        both in their bare form and with an explicit count,
+        Then the cursor ends up at the position implied by the sum of the moves.
+        """
+        s = ANSI.ANSI(5, 5)
+        s.write("\x1b[B")  # down one
+        s.write("\x1b[3B")  # down three, clamped to the last row
+        s.write("\x1b[C")  # forward one
+        s.write("\x1b[3C")  # forward three
+        assert (s.cur_r, s.cur_c) == (5, 5)
+
+        s.write("\x1b[D")  # back one
+        s.write("\x1b[3D")  # back three
+        s.write("\x1b[A")  # up one
+        s.write("\x1b[2A")  # up two
+        assert (s.cur_r, s.cur_c) == (2, 1)
+
+    def test_cursor_save_and_restore_escapes(self) -> None:
+        """Save the cursor position and come back to it.
+
+        Given a 5x5 ANSI terminal whose cursor was moved to row 3, column 4 and
+        then saved with ``ESC 7``,
+        When the cursor is moved elsewhere and ``ESC 8`` is written,
+        Then the cursor is back at row 3, column 4.
+        """
+        s = ANSI.ANSI(5, 5)
+        s.write("\x1b[3;4H\x1b7")
+        s.write("\x1b[1;1H")
+        assert (s.cur_r, s.cur_c) == (1, 1)
+
+        s.write("\x1b8")
+        assert (s.cur_r, s.cur_c) == (3, 4)
+
+    def test_erase_line_escapes(self) -> None:
+        """Erase parts of the current line.
+
+        Given a single-row ANSI terminal filled with dots,
+        When the erase-to-end-of-line, erase-to-start-of-line and erase-line
+        sequences are written with the cursor in the middle of the row,
+        Then only the selected part of the row becomes spaces each time.
+        """
+        s = ANSI.ANSI(1, 4)
+
+        s.fill(".")
+        s.write("\x1b[1;3H\x1b[K")  # bare form, erase to end of line
+        assert str(s) == "..  "
+
+        s.fill(".")
+        s.write("\x1b[1;3H\x1b[0K")  # explicit 0, erase to end of line
+        assert str(s) == "..  "
+
+        s.fill(".")
+        s.write("\x1b[1;3H\x1b[1K")  # erase to start of line
+        assert str(s) == "   ."
+
+        s.fill(".")
+        s.write("\x1b[1;3H\x1b[2K")  # erase the whole line
+        assert str(s) == "    "
+
+        s.fill(".")
+        s.write("\x1b[1;3H\x1b[3K")  # not implemented, so nothing is erased
+        assert str(s) == "...."
+
+    def test_erase_screen_escapes(self) -> None:
+        """Erase parts of the screen.
+
+        Given a 3x2 ANSI terminal filled with dots and the cursor on row 2,
+        When the erase-down, erase-up, erase-screen and an unsupported erase
+        sequence are written,
+        Then each sequence erases the region it selects, and the unsupported one
+        leaves the screen untouched.
+        """
+        s = ANSI.ANSI(3, 2)
+
+        s.fill(".")
+        s.write("\x1b[2;1H\x1b[0J")  # erase from the cursor down
+        assert str(s) == "..\n  \n  "
+
+        s.fill(".")
+        s.write("\x1b[2;1H\x1b[1J")  # erase from the cursor up
+        assert str(s) == "  \n .\n.."
+
+        s.fill(".")
+        s.write("\x1b[2;1H\x1b[2J")  # erase the whole screen
+        assert str(s) == "  \n  \n  "
+
+        s.fill(".")
+        s.write("\x1b[2;1H\x1b[3J")  # not implemented, so nothing is erased
+        assert str(s) == "..\n..\n.."
+
+    def test_enable_scroll_escape(self) -> None:
+        """Re-enable scrolling over the whole screen.
+
+        Given a 5x5 ANSI terminal whose scrolling region was narrowed to rows 2
+        to 3 by ``ESC [ 2 ; 3 r``,
+        When the bare ``ESC [ r`` sequence is written,
+        Then the scrolling region covers every row again.
+        """
+        s = ANSI.ANSI(5, 5)
+        s.write("\x1b[2;3r")
+        assert (s.scroll_row_start, s.scroll_row_end) == (2, 3)
+
+        s.write("\x1b[r")
+        assert (s.scroll_row_start, s.scroll_row_end) == (1, 5)
+
+    def test_reset_mode_escape(self) -> None:
+        """Drop the parameter of an unimplemented reset mode sequence.
+
+        Given a 1x10 ANSI terminal,
+        When the reset-replace-mode sequence ``ESC [ 4 l`` is written and text
+        follows it,
+        Then the parameter is dropped from the FSM stack and the text is written
+        to the screen.
+        """
+        s = ANSI.ANSI(1, 10)
+        s.write("\x1b[4ltest")
+        assert str(s) == "test      "
+        assert s.state.memory == [s]
+
+    def test_scroll_at_the_end_of_the_screen(self) -> None:
+        """Scroll the screen when text runs past the lower-right corner.
+
+        Given a 2x2 ANSI terminal,
+        When five characters are written, so that the cursor runs off the
+        lower-right corner,
+        Then the screen scrolls up and the last character starts a fresh row.
+        """
+        s = ANSI.ANSI(2, 2)
+        s.write("abcde")
+        assert str(s) == "cd\ne "
+
+    def test_process_bytes(self) -> None:
+        """Feed single characters in as bytes.
+
+        Given a 1x4 ANSI terminal using the default latin-1 encoding,
+        When :meth:`ANSI.ANSI.process` is called with one byte at a time,
+        Then the bytes are decoded and written to the screen.
+        """
+        s = ANSI.ANSI(1, 4)
+        for byte in (b"a", b"\xe4"):
+            s.process(byte)
+        assert str(s) == "a\xe4  "
+
+    def test_process_list(self) -> None:
+        """Feed a whole string in through the process_list alias of write.
+
+        Given a 1x4 ANSI terminal,
+        When :meth:`ANSI.ANSI.process_list` is called with a string,
+        Then every character of the string is written to the screen.
+        """
+        s = ANSI.ANSI(1, 4)
+        s.process_list("ab")
+        assert str(s) == "ab  "
+
+    def test_write_ch_bytes(self) -> None:
+        """Put a character supplied as bytes at the cursor position.
+
+        Given a 1x4 ANSI terminal using the default latin-1 encoding,
+        When :meth:`ANSI.ANSI.write_ch` is called with bytes,
+        Then the bytes are decoded and the character lands at the cursor.
+        """
+        s = ANSI.ANSI(1, 4)
+        s.write_ch(b"\xe4")
+        assert str(s) == "\xe4   "
+
 
 if __name__ == "__main__":
     unittest.main()
