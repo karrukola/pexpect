@@ -18,8 +18,13 @@ OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 
 """
 
+import os
+import signal
 import subprocess
+import sys
+import time
 import unittest
+from unittest import mock
 
 import pytest
 
@@ -152,6 +157,129 @@ class ExpectTestCase(pexpect_test_case.PexpectTestCase):
         """Read a child's output as text when an encoding is given."""
         p = PopenSpawn("echo alpha beta", encoding="utf-8")
         assert p.read() == "alpha beta" + p.crlf
+
+    def test_command_as_a_list(self) -> None:
+        """Start a child from an already split command line.
+
+        Given a command given as a list of arguments rather than as one string,
+        When a PopenSpawn is created from it,
+        Then the list is passed through unsplit and the child runs.
+        """
+        p = PopenSpawn(["echo", "alpha beta"])
+        assert p.read() == b"alpha beta" + p.crlf
+
+    def test_write_and_writelines(self) -> None:
+        """Send data to the child with the file-like write methods.
+
+        Given a ``cat`` child,
+        When :meth:`PopenSpawn.write` and :meth:`PopenSpawn.writelines` are
+        used to send data,
+        Then the child echoes everything back in the order it was sent.
+        """
+        p = PopenSpawn("cat", timeout=5)
+        p.write(b"alpha")
+        p.writelines([b" beta", b" gamma", b"\n"])
+        p.expect_exact(b"alpha beta gamma")
+        p.sendeof()
+        p.expect(pexpect.EOF)
+
+    def test_wait_reports_the_exit_status(self) -> None:
+        """Report the exit code of a child that exited on its own.
+
+        Given a child that exits with status 1,
+        When :meth:`PopenSpawn.wait` is called,
+        Then it returns that status and records it on the spawn.
+        """
+        p = PopenSpawn([sys.executable, "exit1.py"])
+        p.expect(pexpect.EOF)
+
+        assert p.wait() == 1
+        assert p.exitstatus == 1
+        assert p.signalstatus is None
+        assert p.terminated
+
+    def test_wait_reports_the_signal_that_killed_the_child(self) -> None:
+        """Report the signal a child was killed by.
+
+        Given a ``cat`` child that is sent SIGKILL,
+        When :meth:`PopenSpawn.wait` is called,
+        Then the signal is reported instead of an exit status.
+        """
+        p = PopenSpawn("cat")
+        p.kill(signal.SIGKILL)
+
+        assert p.wait() == -signal.SIGKILL
+        assert p.exitstatus is None
+        assert p.signalstatus == signal.SIGKILL
+        assert p.terminated
+
+    def test_read_after_eof_drains_the_buffer(self) -> None:
+        """Hand out what is left in the buffer before reporting EOF.
+
+        Given a child whose pipe has closed, with characters still buffered.
+        The buffer is seeded here because read_nonblocking() never leaves
+        anything behind once it has seen the end of the child's output, so this
+        guard is otherwise unreachable,
+        When read_nonblocking() is called for fewer characters than the buffer
+        holds, and then called until the buffer is empty,
+        Then the buffered characters come out first and EOF is only raised once
+        nothing is left.
+        """
+        p = PopenSpawn("echo alpha")
+        p.expect(pexpect.EOF)
+        assert p._read_reached_eof
+
+        p._buf = b"beta"
+        assert p.read_nonblocking(size=2, timeout=5) == b"be"
+        assert p.read_nonblocking(size=2, timeout=5) == b"ta"
+        with pytest.raises(pexpect.EOF):
+            p.read_nonblocking(size=2, timeout=5)
+
+    def test_read_nonblocking_with_the_default_timeout(self) -> None:
+        """Read with the timeout the spawn was created with.
+
+        Given a PopenSpawn created with a timeout of its own,
+        When read_nonblocking() is called with the -1 default, meaning "use the
+        spawn timeout", until the reader thread has queued the child's output,
+        Then that output is returned.
+        """
+        p = PopenSpawn("echo alpha", timeout=5)
+
+        deadline = time.time() + 5
+        data = b""
+        while not data and time.time() < deadline:
+            data = p.read_nonblocking(size=1000, timeout=-1)
+
+        assert b"alpha" in data
+
+    def test_read_nonblocking_of_nothing(self) -> None:
+        """Return at once when no characters were asked for.
+
+        Given a running child,
+        When read_nonblocking() is asked for zero characters,
+        Then it returns an empty result without waiting for the child.
+        """
+        p = PopenSpawn("cat", timeout=5)
+        assert p.read_nonblocking(size=0, timeout=5) == b""
+        p.sendeof()
+        p.expect(pexpect.EOF)
+
+    def test_reader_thread_survives_a_read_error(self) -> None:
+        """Treat a failed read of the child's pipe as the end of its output.
+
+        Given a reader whose next read of the child's pipe fails,
+        When the reader loop runs,
+        Then the error is logged and the loop reports the end of the output by
+        queueing the None sentinel.
+        """
+        p = PopenSpawn("cat")
+
+        with mock.patch.object(os, "read", side_effect=OSError("read failed")):
+            p._read_incoming()
+
+        assert p._read_queue.get_nowait() is None
+        p.kill(signal.SIGKILL)
+        p.wait()
 
 
 if __name__ == "__main__":
