@@ -664,11 +664,65 @@ class ExpectTestCase(pexpect_test_case.PexpectTestCase):
         with pytest.raises(TypeError, match=r".*must be one of"):
             p.expect_exact([1, b"2"])
 
+    def test_legacy_async_keyword(self) -> None:
+        """Accept the pre-3.7 spelling of the async_ flag.
+
+        Given the three expect methods, which took a keyword literally named
+        "async" before it became a reserved word,
+        When each is called with that keyword set to False,
+        Then the call behaves like a plain synchronous match.
+        """
+        p = pexpect.spawn("echo abcdef")
+        assert p.expect("abc", **{"async": False}) == 0
+        assert p.expect_exact("de", **{"async": False}) == 0
+        assert p.expect_list([re.compile(b"f")], **{"async": False}) == 0
+
+    def test_unknown_keyword_arguments(self) -> None:
+        """Reject keyword arguments the expect methods do not know.
+
+        Given the three expect methods,
+        When each is called with an unknown keyword argument,
+        Then :exc:`TypeError` is raised naming the unknown arguments.
+        """
+        p = pexpect.spawn("cat")
+        with pytest.raises(TypeError, match=r"Unknown keyword arguments"):
+            p.expect("abc", nonexistent=1)
+        with pytest.raises(TypeError, match=r"Unknown keyword arguments"):
+            p.expect_exact("abc", nonexistent=1)
+        with pytest.raises(TypeError, match=r"Unknown keyword arguments"):
+            p.expect_list([re.compile(b"abc")], nonexistent=1)
+
+    def test_expect_loop(self) -> None:
+        """Match with a searcher handed straight to the expect loop.
+
+        Given a spawn and a searcher built by hand,
+        When :meth:`pexpect.spawn.expect_loop` is called with that searcher and
+        an explicit timeout, which this method needs because it does not
+        translate the -1 default into the spawn timeout,
+        Then the index of the matching pattern is returned.
+        """
+        p = pexpect.spawn("echo abcdef")
+        assert p.expect_loop(pexpect.searcher_string([b"abc"]), timeout=10) == 0
+        assert p.expect_loop(pexpect.searcher_re([re.compile(b"def")]), timeout=10) == 0
+
     def test_timeout_none(self) -> None:
         """Match without a timeout when timeout=None."""
         p = pexpect.spawn("echo abcdef", timeout=None)
         p.expect("abc")
         p.expect_exact("def")
+        p.expect(pexpect.EOF)
+
+    def test_timeout_none_across_reads(self) -> None:
+        """Keep reading without a timeout until the pattern is complete.
+
+        Given a child that prints half of the pattern, pauses and then prints
+        the rest, and a spawn created with timeout=None,
+        When the whole pattern is expected,
+        Then the read loop goes round again with no deadline to recompute and
+        matches once the second half arrives.
+        """
+        p = pexpect.spawn("sh", ["-c", "printf abc; sleep 0.3; printf def"], timeout=None)
+        p.expect("abcdef")
         p.expect(pexpect.EOF)
 
     def test_signal_handling(self) -> None:
