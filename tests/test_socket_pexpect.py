@@ -77,6 +77,53 @@ class ExpectTestCase(pexpect_test_case.PexpectTestCase):
         assert not s.isatty()
         s.close()
 
+    def test_write_and_writelines(self) -> None:
+        """Send data to a socket with the file-like write methods.
+
+        Given a socket pair whose first socket is wrapped in a SocketSpawn,
+        When :meth:`SocketSpawn.write`, :meth:`SocketSpawn.sendline` and
+        :meth:`SocketSpawn.writelines` are used to send data,
+        Then everything sent, including the line separator sendline appends,
+        arrives at the other end of the socket pair in order.
+        """
+        send_socket, recv_socket = socket.socketpair()
+        self.addCleanup(recv_socket.close)
+        s = socket_pexpect.SocketSpawn(send_socket)
+
+        s.write(b"one")
+        s.writelines([b"two", b"three"])
+        sent = s.sendline(b"four")
+        assert sent == len(b"four" + s.linesep)
+
+        expected = b"onetwothreefour" + s.linesep
+        assert recv_socket.recv(len(expected)) == expected
+        s.close()
+
+    def test_read_nonblocking_with_the_default_timeout(self) -> None:
+        """Read with the timeout the spawn was created with.
+
+        Given a SocketSpawn over a socket holding canned data, created with a
+        timeout of its own,
+        When :meth:`SocketSpawn.read_nonblocking` is called without a timeout,
+        so that the spawn timeout applies,
+        Then the requested number of bytes is returned.
+        """
+        s = socket_pexpect.SocketSpawn(open_file_socket("TESTDATA.txt"), timeout=10)
+        assert s.read_nonblocking(size=4) == b"This"
+        s.close()
+
+    def test_close_is_repeatable(self) -> None:
+        """Close a SocketSpawn twice without raising.
+
+        Given a SocketSpawn that has already been closed,
+        When :meth:`SocketSpawn.close` is called again,
+        Then the call does nothing and the spawn stays closed.
+        """
+        s = socket_pexpect.SocketSpawn(open_file_socket("TESTDATA.txt"))
+        s.close()
+        s.close()
+        assert s.closed
+
 
 if __name__ == "__main__":
     unittest.main()
