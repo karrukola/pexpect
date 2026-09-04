@@ -120,56 +120,56 @@ lint.per-file-ignores."doc/*" = [ "ANN" ]
 # interface. Renaming a class or module, splitting a signature or making a flag
 # keyword-only would break every downstream caller, so these rules are silenced
 # per file rather than obeyed. New modules are still checked.
-lint.per-file-ignores."pexpect/ANSI.py" = [
+lint.per-file-ignores."src/pexpect/ANSI.py" = [
     "N801",   # `term` is public API
     "N802",   # `DoEmit` and friends are public FSM action callbacks
     "N999",   # imported as `pexpect.ANSI`
 ]
-lint.per-file-ignores."pexpect/FSM.py" = [
+lint.per-file-ignores."src/pexpect/FSM.py" = [
     "N802",   # `BeginBuildNumber` and friends are public FSM action callbacks
     "N818",   # `ExceptionFSM` is public API
     "N999",   # imported as `pexpect.FSM`
 ]
-lint.per-file-ignores."pexpect/exceptions.py" = [
+lint.per-file-ignores."src/pexpect/exceptions.py" = [
     "N818",   # `ExceptionPexpect` is public API
 ]
-lint.per-file-ignores."pexpect/expect.py" = [
+lint.per-file-ignores."src/pexpect/expect.py" = [
     "N801",   # `searcher_string` and `searcher_re` are public API
 ]
-lint.per-file-ignores."pexpect/fdpexpect.py" = [
+lint.per-file-ignores."src/pexpect/fdpexpect.py" = [
     "FBT001", "FBT002",  # public positional/keyword bool flags
     "N801",   # `fdspawn` is public API
     "PLR0913", "PLR0917",  # `fdspawn.__init__` signature is public API
 ]
-lint.per-file-ignores."pexpect/popen_spawn.py" = [
+lint.per-file-ignores."src/pexpect/popen_spawn.py" = [
     "PLR0913", "PLR0917",  # `PopenSpawn.__init__` signature is public API
 ]
-lint.per-file-ignores."pexpect/pty_spawn.py" = [
+lint.per-file-ignores."src/pexpect/pty_spawn.py" = [
     "FBT001", "FBT002",  # public positional/keyword bool flags, e.g. `close(force=True)`
     "N801",   # `spawn` is public API
     "PLR0913", "PLR0917",  # `spawn.__init__` signature is public API
 ]
-lint.per-file-ignores."pexpect/pxssh.py" = [
+lint.per-file-ignores."src/pexpect/pxssh.py" = [
     "FBT001", "FBT002",  # public positional/keyword bool flags
     "N801",   # `pxssh` is public API
     "PLR0913", "PLR0917",  # `pxssh.login` signature is public API
 ]
-lint.per-file-ignores."pexpect/replwrap.py" = [
+lint.per-file-ignores."src/pexpect/replwrap.py" = [
     "FBT001", "FBT002", "FBT003",  # public bool flags
     "PLR0913", "PLR0917",  # `REPLWrapper.__init__` signature is public API
 ]
-lint.per-file-ignores."pexpect/run.py" = [
+lint.per-file-ignores."src/pexpect/run.py" = [
     "FBT001", "FBT002",  # public positional/keyword bool flags
     "PLR0913", "PLR0917",  # `run` and `runu` signatures are public API
 ]
-lint.per-file-ignores."pexpect/screen.py" = [
+lint.per-file-ignores."src/pexpect/screen.py" = [
     "N801",   # `screen` is public API
 ]
-lint.per-file-ignores."pexpect/socket_pexpect.py" = [
+lint.per-file-ignores."src/pexpect/socket_pexpect.py" = [
     "FBT001", "FBT002",  # public positional/keyword bool flags
     "PLR0913", "PLR0917",  # `SocketSpawn.__init__` signature is public API
 ]
-lint.per-file-ignores."pexpect/spawnbase.py" = [
+lint.per-file-ignores."src/pexpect/spawnbase.py" = [
     "FBT001", "FBT002",  # public positional/keyword bool flags
     "PLR0913", "PLR0917",  # `SpawnBase.__init__` signature is public API
 ]

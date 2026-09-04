@@ -5,8 +5,11 @@ repository. **None of them are fixed.** Every entry here was left alone because
 fixing it would change runtime behaviour, which was out of scope for a lint
 pass — the lint work itself was required to be behaviour-preserving.
 
-Line numbers refer to the tree as of the lint pass. All of them were verified
-against the source, not inferred from the rule that surfaced them.
+Line numbers refer to the tree as of the lint pass and were each verified
+against the source, not inferred from the rule that surfaced them. The
+library paths are given under `src/pexpect/`, its location since the switch
+to the src layout; that move was a pure rename, so the line numbers are
+unaffected by it.
 
 Three related bugs *were* fixed during that pass, because they blocked the test
 suite or were introduced by an autofix, and are recorded at the bottom for
@@ -14,11 +17,11 @@ context.
 
 ---
 
-## Library (`pexpect/`)
+## Library (`src/pexpect/`)
 
 ### 1. `screen.get()` returns `None`
 
-**`pexpect/screen.py:240`**
+**`src/pexpect/screen.py:240`**
 
 ```python
 def get(self):
@@ -46,7 +49,7 @@ then legitimately fail.
 
 ### 2. `pxssh` tunnel guard rejects every `dict` subclass
 
-**`pexpect/pxssh.py:325`**
+**`src/pexpect/pxssh.py:325`**
 
 ```python
 if ssh_tunnels == {} or not isinstance({}, type(ssh_tunnels)):
@@ -62,7 +65,7 @@ forwarded.
 
 ### 3. `ssh_key=False` is treated as a file path
 
-**`pexpect/pxssh.py:306`**
+**`src/pexpect/pxssh.py:306`**
 
 ```python
 if spawn_local_ssh and not Path(str(ssh_key)).is_file():
@@ -80,7 +83,7 @@ non-`str`, non-`True` value.
 
 ### 4. `SocketSpawn.use_poll` is stored and never read
 
-**`pexpect/socket_pexpect.py:54` (parameter), `:72` (assignment)**
+**`src/pexpect/socket_pexpect.py:54` (parameter), `:72` (assignment)**
 
 `read_nonblocking` uses `socket.settimeout` instead, so the flag has no effect.
 It is part of the public signature, so it cannot simply be deleted.
@@ -90,7 +93,7 @@ ignored.
 
 ### 5. `PopenSpawn.send()`'s documented return value is accidental
 
-**`pexpect/popen_spawn.py:165`**
+**`src/pexpect/popen_spawn.py:165`**
 
 The docstring promises "Returns the number of bytes written" and the body is
 now `return self.proc.stdin.write(b)`. That happens to be correct on Python 3.
@@ -102,7 +105,7 @@ contract silently.
 
 ### 6. Async continuation-prompt error omits the offending command
 
-**`pexpect/_async_w_await.py:65`** vs **`pexpect/replwrap.py:126`**
+**`src/pexpect/_async_w_await.py:65`** vs **`src/pexpect/replwrap.py:126`**
 
 The synchronous path appends the command to the message:
 
@@ -117,7 +120,7 @@ incomplete input is much harder to diagnose from an async call site.
 
 ### 7. EINTR retry loops are dead code
 
-**`pexpect/utils.py:111` (`select_ignore_interrupts`), `:143` (`poll_ignore_interrupts`)**
+**`src/pexpect/utils.py:111` (`select_ignore_interrupts`), `:143` (`poll_ignore_interrupts`)**
 
 Since PEP 475 (Python 3.5) `select` and `poll` retry on `EINTR` themselves, so
 `InterruptedError` no longer escapes. Additionally `InterruptedError.args[0]`
@@ -129,7 +132,7 @@ justified on the assumption the retry is live.
 
 ### 8. Unreachable guard in `spawn._spawn`
 
-**`pexpect/pty_spawn.py:362`**
+**`src/pexpect/pty_spawn.py:362`**
 
 ```python
 if self.command is None:
@@ -142,7 +145,7 @@ a guard removed by mistake is worse than a guard that never fires.
 
 ### 9. Fragile coupling in the searchers
 
-**`pexpect/expect.py:318-326`** (and the same shape at `:398`)
+**`src/pexpect/expect.py:318-326`** (and the same shape at `:398`)
 
 `best_index` and `best_match` are only bound inside the `if` that also sets
 `first_match`, then read after the loop. It is safe today because `first_match
@@ -151,7 +154,7 @@ that to hold. No live defect; noted because it is easy to break.
 
 ### 10. `_check_ssh_config_username` has no explicit flush
 
-**`pexpect/pxssh.py:365`**
+**`src/pexpect/pxssh.py:365`**
 
 Reading a config written through `NamedTemporaryFile` relies on `seek(0)`
 flushing the write buffer. That holds on CPython (`BufferedRandom.seek`
@@ -403,7 +406,7 @@ bisecting this range should know about them.
 2. **`tests/pexpect_test_case.py`** — `COVERAGE_PROCESS_START` still pointed at
    `.coveragerc`, deleted by that same commit. Now points at `pyproject.toml`.
 
-3. **`pexpect/pxssh.py`** — ruff's `E712` autofix rewrote
+3. **`src/pexpect/pxssh.py`** — ruff's `E712` autofix rewrote
    `if ssh_key == True:` to `if ssh_key:`. Since `ssh_key` holds either `True`
    (forward the agent, `-A`) or a private-key *path*, and a non-empty path is
    truthy, every path took the `-A` branch and `-i <path>` was never emitted.

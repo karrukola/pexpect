@@ -33,7 +33,7 @@ def detect_maxcanon() -> None:
     import pexpect  # lazy so __main__ can report a missing pexpect  # noqa: PLC0415
 
     # re-use pexpect/replwrap.py's bashrc file
-    bashrc = str(Path(__file__).resolve().parent.parent / "pexpect" / "bashrc.sh")
+    bashrc = str(Path(__file__).resolve().parent.parent / "src" / "pexpect" / "bashrc.sh")
 
     child = pexpect.spawn("bash", ["--rcfile", bashrc], echo=True, encoding="utf8", timeout=3)
 
