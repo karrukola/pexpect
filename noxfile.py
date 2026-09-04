@@ -16,7 +16,7 @@ nox.options.default_venv_backend = "uv"
 
 
 _REPO_ROOT = Path(__file__).parent
-
+_TESTS_ROOT = _REPO_ROOT / "tests"
 _PYTHON_VERSIONS = [
     "3.10",
     "3.11",
@@ -42,3 +42,28 @@ def lint(session: nox.Session) -> None:
     _install_deps(session)
     session.run("ruff", "format", "--check", _REPO_ROOT)
     session.run("ruff", "check", _REPO_ROOT)
+
+
+@nox.session
+def coverage_clean(session: nox.Session) -> None:
+    """Clean coverage data."""
+    _install_deps(session)
+    session.run("coverage", "erase")
+
+
+@nox.session(python=_PYTHON_VERSIONS, requires=("coverage_clean",))
+def test(session: nox.Session) -> None:
+    """Run project tests."""
+    _install_deps(session)
+    session.run("coverage", "run", "-m", "pytest", _TESTS_ROOT)
+
+    session.notify("collate_coverage")
+
+
+@nox.session
+def collate_coverage(session: nox.Session) -> None:
+    """Combine test coverage results from all test executions."""
+    _install_deps(session)
+    session.run("coverage", "combine")
+    session.run("coverage", "xml")
+    session.run("coverage", "html")
