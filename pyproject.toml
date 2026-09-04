@@ -1,0 +1,79 @@
+[project]
+name = "pexpect"
+dynamic = ["version"]
+requires-python = ">=3.10"
+dependencies = [
+    "ptyprocess>=0.7.0",
+]
+authors = [
+  {name = "Noah Spurrier", email="noah@noah.org"},
+  {name = "Thomas Kluyver", email="thomas@kluyver.me.uk"},
+  {name = "Jeff Quast", email="contact@jeffquast.com"},
+]
+maintainers = []
+license-files = ["LICENSE"]
+classifiers = [
+    'Development Status :: 5 - Production/Stable',
+    'Environment :: Console',
+    'Intended Audience :: Developers',
+    'Intended Audience :: System Administrators',
+    'Operating System :: POSIX',
+    'Operating System :: MacOS :: MacOS X',
+    'Programming Language :: Python',
+    'Programming Language :: Python :: 3',
+    'Programming Language :: Python :: 3.10',
+    'Programming Language :: Python :: 3.11',
+    'Programming Language :: Python :: 3.12',
+    'Programming Language :: Python :: 3.13',
+    'Programming Language :: Python :: 3.14',
+    'Topic :: Software Development',
+    'Topic :: Software Development :: Libraries :: Python Modules',
+    'Topic :: Software Development :: Quality Assurance',
+    'Topic :: Software Development :: Testing',
+    'Topic :: System',
+    'Topic :: System :: Archiving :: Packaging',
+    'Topic :: System :: Installation/Setup',
+    'Topic :: System :: Shells',
+    'Topic :: System :: Software Distribution',
+    'Topic :: Terminals',
+]
+
+[project.urls]
+    Homepage='https://pexpect.readthedocs.io/'
+    Documentation= "https://pexpect.readthedocs.io/"
+    Issues = "https://github.com/pexpect/pexpect/issues"
+    Repository =  "https://github.com/pexpect/pexpect"
+    Changelog =  "https://pexpect.readthedocs.io/en/stable/history.html"
+
+
+
+
+[dependency-groups]
+dev = [
+    "coverage>=7.16.0",
+    "coveralls>=4.1.0",
+    "pytest>=9.1.1",
+    "pytest-cov>=7.1.0",
+]
+
+
+[build-system]
+requires = ["setuptools >= 77.0.3", "setuptools_scm"]
+build-backend = "setuptools.build_meta"
+
+
+[tool.setuptools_scm]
+version_scheme = "no-guess-dev"
+local_scheme = "no-local-version"
+
+[tool.uv]
+python-preference = "only-system"
+
+# Ensure that we use the public Python Package Index.
+[[tool.uv.index]]
+url = "https://pypi.org/simple"
+default = true
+
+[tool.coverage.run]
+source = "pexpect"
+parallel = true
