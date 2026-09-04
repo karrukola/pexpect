@@ -22,6 +22,8 @@ import os
 import unittest
 from pathlib import Path
 
+import pytest
+
 import pexpect
 from pexpect import fdpexpect
 
@@ -77,6 +79,68 @@ class ExpectTestCase(pexpect_test_case.PexpectTestCase):
         s.close()
         assert not s.isalive()
         s.close()  # Smoketest - should be able to call this again
+
+    def test_write_and_writelines(self) -> None:
+        """Send data to a file descriptor with the file-like write methods.
+
+        Given a pipe whose write end is wrapped in an fdspawn,
+        When :meth:`fdspawn.write`, :meth:`fdspawn.sendline` and
+        :meth:`fdspawn.writelines` are used to send data,
+        Then everything sent, including the line separator sendline appends,
+        arrives at the read end of the pipe in order.
+        """
+        read_fd, write_fd = os.pipe()
+        self.addCleanup(os.close, read_fd)
+        s = fdpexpect.fdspawn(write_fd)
+
+        s.write(b"one")
+        s.writelines([b"two", b"three"])
+        sent = s.sendline(b"four")
+        assert sent == len(b"four" + s.linesep)
+
+        expected = b"onetwothreefour" + s.linesep
+        assert os.read(read_fd, len(expected)) == expected
+        s.close()
+
+    def test_read_nonblocking_with_the_default_timeout(self) -> None:
+        """Read with the timeout the spawn was created with.
+
+        Given an fdspawn over a file, created with a timeout of its own,
+        When :meth:`fdspawn.read_nonblocking` is called without a timeout, so
+        that the spawn timeout applies,
+        Then the requested number of bytes is returned.
+        """
+        fd = os.open("TESTDATA.txt", os.O_RDONLY)
+        s = fdpexpect.fdspawn(fd, timeout=10)
+        assert s.read_nonblocking(size=4) == b"This"
+        s.close()
+
+    def test_read_nonblocking_with_poll(self) -> None:
+        """Wait for the file descriptor with poll() instead of select().
+
+        Given an fdspawn over a file, created with use_poll set,
+        When :meth:`fdspawn.read_nonblocking` is called,
+        Then poll() reports the descriptor ready and the bytes are returned.
+        """
+        fd = os.open("TESTDATA.txt", os.O_RDONLY)
+        s = fdpexpect.fdspawn(fd, use_poll=True)
+        assert s.read_nonblocking(size=4) == b"This"
+        s.close()
+
+    def test_read_nonblocking_times_out(self) -> None:
+        """Give up on a file descriptor that never becomes readable.
+
+        Given an fdspawn over the read end of a pipe that nothing writes to,
+        When :meth:`fdspawn.read_nonblocking` is called with a short timeout,
+        Then :exc:`pexpect.TIMEOUT` is raised.
+        """
+        read_fd, write_fd = os.pipe()
+        self.addCleanup(os.close, write_fd)
+        s = fdpexpect.fdspawn(read_fd)
+
+        with pytest.raises(pexpect.TIMEOUT):
+            s.read_nonblocking(size=1, timeout=0.1)
+        s.close()
 
 
 if __name__ == "__main__":
