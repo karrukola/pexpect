@@ -3,8 +3,12 @@
 import os
 import platform
 import re
+import shutil
 import sys
 import unittest
+from pathlib import Path
+
+import pytest
 
 import pexpect
 from pexpect import replwrap
@@ -96,8 +100,15 @@ class REPLWrapTestCase(unittest.TestCase):
         assert res.strip().splitlines() == ["1 2", "3 4"]
 
     def test_existing_spawn(self) -> None:
-        """Wrap a shell the caller spawned instead of one replwrap starts."""
-        child = pexpect.spawn("bash", timeout=5, encoding="utf-8")
+        """Wrap a shell the caller spawned instead of one replwrap starts.
+
+        Given a bash spawned by the caller with the bundled rcfile, so that the
+        prompt is predictable whatever the host bash configuration is,
+        When it is handed to :class:`replwrap.REPLWrapper` as an existing spawn,
+        Then the wrapper adopts it and runs commands through it.
+        """
+        bashrc = Path(replwrap.__file__).parent / "bashrc.sh"
+        child = pexpect.spawn("bash", ["--rcfile", str(bashrc)], timeout=5, encoding="utf-8")
         repl = replwrap.REPLWrapper(
             child, re.compile("[$#]"), "PS1='{0}' PS2='{1}' PROMPT_COMMAND=''"
         )
@@ -107,6 +118,18 @@ class REPLWrapTestCase(unittest.TestCase):
         print(res)
         assert res.startswith("/"), res
 
+    def test_zsh_reports_a_missing_shell(self) -> None:
+        """Report a zsh binary that is not on the path.
+
+        Given a command name that names no executable on the path, so that the
+        test does not depend on zsh being installed,
+        When :func:`replwrap.zsh` is asked to start it,
+        Then :exc:`pexpect.ExceptionPexpect` is raised.
+        """
+        with pytest.raises(pexpect.ExceptionPexpect):
+            replwrap.zsh(command="zsh-does-not-exist")
+
+    @unittest.skipUnless(shutil.which("zsh"), "zsh is not installed")
     def test_zsh(self) -> None:
         """Run a command in zsh, and reject empty input."""
         zsh = replwrap.zsh()
