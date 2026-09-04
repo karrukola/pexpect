@@ -94,6 +94,17 @@ class RunFuncTestCase(pexpect_test_case.PexpectTestCase):
         assert self.prep_subprocess_out(the_old_way) == the_new_way
         assert exitstatus == 0
 
+    def test_run_with_the_default_spawn_timeout(self) -> None:
+        """Run a command without overriding the spawn timeout.
+
+        Given a timeout of -1, which run() documents as meaning "leave the
+        spawn default in place",
+        When :func:`pexpect.run` executes a command,
+        Then the command runs to completion and its output is returned.
+        """
+        output = self.runfunc("uname -m -n", timeout=-1)
+        assert output.replace(self.cr, self.empty).rstrip()
+
     def test_run_callback(self) -> None:
         """A TIMEOUT event callback can stop a child that never exits."""
         # TODO it seems like this test could block forever if run fails...
