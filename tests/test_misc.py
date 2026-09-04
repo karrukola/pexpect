@@ -18,6 +18,7 @@ OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 
 """
 
+import io
 import os
 import re
 import signal
@@ -26,6 +27,7 @@ import tempfile
 import time
 import unittest
 from collections.abc import Callable
+from unittest import mock
 
 import pytest
 
@@ -35,6 +37,9 @@ from . import pexpect_test_case
 
 # the program cat(1) may display ^D\x08\x08 when \x04 (EOF, Ctrl-D) is sent
 _CAT_EOF = b"^D\x08\x08"
+
+# the shortest read_nonblocking() timeout pexpect accepts on Irix
+_IRIX_MIN_TIMEOUT = 2
 
 # read_nonblocking() raises this once the spawn has been closed
 _CLOSED_FILE_ERRMSG = re.escape("I/O operation on closed file.")
@@ -203,6 +208,256 @@ class TestCaseMisc(pexpect_test_case.PexpectTestCase):
             time.sleep(0.1)
         else:
             self.fail("Child process should have exited.")
+
+    def test_write_to_stdout_without_a_buffer(self) -> None:
+        """Write bytes to a stdout that has no binary buffer.
+
+        Given a spawn in bytes mode and a stdout replacement that offers no
+        .buffer attribute, as a captured text stream does,
+        When :meth:`pexpect.spawn.write_to_stdout` is called,
+        Then the bytes are decoded and written to the text stream.
+        """
+        child = pexpect.spawn("cat")
+        stdout = io.StringIO()
+        with mock.patch.object(sys, "stdout", stdout):
+            child.write_to_stdout(b"hello")
+
+        assert stdout.getvalue() == "hello"
+
+    def test_read_stops_at_the_delimiter(self) -> None:
+        """Return everything read when EOF arrives before the requested size.
+
+        Given a child that prints a few characters and exits,
+        When :meth:`pexpect.spawn.read` is asked for far more characters than
+        the child produced,
+        Then everything the child printed is returned.
+        """
+        child = pexpect.spawn("echo abc")
+        assert child.read(1000) == b"abc\r\n"
+
+    def test_eof_flag(self) -> None:
+        """Report whether an EOF was ever seen on the child's pty.
+
+        Given a freshly spawned child,
+        When it is sent an EOF and the EOF exception has been raised,
+        Then :meth:`pexpect.spawn.eof` changes from False to True.
+        """
+        child = pexpect.spawn("cat")
+        assert not child.eof()
+
+        child.sendeof()
+        child.expect(pexpect.EOF)
+        assert child.eof()
+
+    def test_terminate_a_child_that_is_already_dead(self) -> None:
+        """Report success when there is nothing left to terminate.
+
+        Given a child that has already exited,
+        When :meth:`pexpect.spawn.terminate` is called,
+        Then it returns True without sending any signal.
+        """
+        child = pexpect.spawn("cat")
+        child.sendeof()
+        child.expect(pexpect.EOF)
+        assert child.terminate()
+
+    def test_terminate_a_child_that_ignores_the_polite_signals(self) -> None:
+        """Report failure when the child survives everything but SIGKILL.
+
+        Given a child that ignores SIGHUP, SIGCONT and SIGINT,
+        When :meth:`pexpect.spawn.terminate` is called without force, so that
+        SIGKILL is never sent,
+        Then it returns False and the child is still alive.
+        """
+        child = pexpect.spawn(self.PYTHONBIN + " needs_kill.py")
+        child.expect("READY")
+
+        assert not child.terminate()
+        assert child.isalive()
+
+        child.terminate(force=True)
+
+    def test_terminate_when_the_kernel_reports_a_dead_child_as_alive(self) -> None:
+        """Fall back to one last liveness check when signalling fails.
+
+        Given a child that isalive() reports as alive but that the kernel has
+        already reaped, so that sending a signal raises OSError,
+        When :meth:`pexpect.spawn.terminate` is called,
+        Then the error is swallowed and the result is the answer of one final
+        liveness check.
+        """
+        child = pexpect.spawn("cat")
+        child.sendeof()
+        child.expect(pexpect.EOF)
+
+        with (
+            mock.patch.object(child, "isalive", side_effect=[True, False]),
+            mock.patch.object(child, "kill", side_effect=OSError("no such process")),
+        ):
+            assert child.terminate()
+
+    def test_read_nonblocking_on_a_braindead_platform(self) -> None:
+        """Raise EOF when the child is gone and nothing is left to read.
+
+        Given a dead child whose pty never becomes readable, which is how
+        platforms such as Solaris behave,
+        When :meth:`pexpect.spawn.read_nonblocking` is called with the default
+        timeout,
+        Then :exc:`pexpect.EOF` is raised.
+        """
+        child = pexpect.spawn("cat")
+        with (
+            mock.patch.object(child, "isalive", return_value=False),
+            mock.patch.object(child, "_ready", return_value=False),
+            pytest.raises(pexpect.EOF, match="Braindead platform"),
+        ):
+            child.read_nonblocking()
+
+    def test_read_nonblocking_on_a_very_slow_platform(self) -> None:
+        """Raise EOF when the child only admits to being dead after the wait.
+
+        Given a child that isalive() first reports as alive and then, after the
+        read timed out, reports as dead,
+        When :meth:`pexpect.spawn.read_nonblocking` is called,
+        Then :exc:`pexpect.EOF` is raised instead of a timeout.
+        """
+        child = pexpect.spawn("cat")
+        with (
+            mock.patch.object(child, "isalive", side_effect=[True, False]),
+            pytest.raises(pexpect.EOF, match="Very slow platform"),
+        ):
+            child.read_nonblocking(timeout=0.1)
+
+    def test_read_nonblocking_raises_the_irix_minimum_timeout(self) -> None:
+        """Wait at least two seconds for a read on Irix.
+
+        Given a spawn created while the platform claims to be Irix,
+        When :meth:`pexpect.spawn.read_nonblocking` is called with a timeout
+        below the two second Irix minimum,
+        Then the wait is stretched to that minimum before TIMEOUT is raised.
+        """
+        with mock.patch.object(sys, "platform", "irix6.5"):
+            child = pexpect.spawn("cat")
+
+        started = time.time()
+        with pytest.raises(pexpect.TIMEOUT):
+            child.read_nonblocking(timeout=0.1)
+
+        assert time.time() - started >= _IRIX_MIN_TIMEOUT
+
+    def test_interact_stops_at_a_bsd_style_eof(self) -> None:
+        """Stop copying the child's output when a read returns nothing.
+
+        Given a spawn whose pty reports EOF as an empty read, which is how the
+        BSDs behave, rather than as an EIO error,
+        When interact() copies a chunk from the child to stdout,
+        Then the copy reports that there is nothing more to read.
+        """
+        child = pexpect.spawn("cat")
+        with mock.patch.object(child, "_spawn__interact_read", return_value=b""):
+            assert child._spawn__interact_child_to_stdout(None) is False
+
+    def test_spawn_refuses_to_start_a_second_child(self) -> None:
+        """Refuse to spawn again over a running child.
+
+        Given a spawn that already has a child process,
+        When _spawn() is called again,
+        Then :exc:`pexpect.ExceptionPexpect` complains about the pid member.
+        """
+        child = pexpect.spawn("cat")
+        with pytest.raises(pexpect.ExceptionPexpect, match="pid member must be None"):
+            child._spawn("cat")
+
+    def test_spawn_refuses_an_unresolved_command(self) -> None:
+        """Refuse to spawn when the command could not be resolved.
+
+        Given a spawn subclass whose command resolution leaves the command
+        unset,
+        When _spawn() is called,
+        Then :exc:`pexpect.ExceptionPexpect` complains about the command member.
+        """
+
+        class UnresolvingSpawn(pexpect.spawn):
+            """A spawn that never works out what to run."""
+
+            def _resolve_command(self, command: str, args: list[str]) -> None:
+                """Leave the command unresolved."""
+
+        child = UnresolvingSpawn(None)
+        with pytest.raises(pexpect.ExceptionPexpect, match="command member must not be None"):
+            child._spawn("cat")
+
+    def test_ignore_sighup_wraps_the_preexec_function(self) -> None:
+        """Ignore SIGHUP in the child before running the caller's preexec_fn.
+
+        Given a spawn asked to ignore SIGHUP and a preexec_fn of its own,
+        When the wrapper that _spawn() would hand to ptyprocess is run,
+        Then SIGHUP is set to be ignored and the caller's preexec_fn is called.
+        """
+        called = []
+
+        def preexec() -> None:
+            """Record that the caller's preexec_fn ran."""
+            called.append(signal.getsignal(signal.SIGHUP))
+
+        child = pexpect.spawn(None, ignore_sighup=True)
+        wrapper = child._ptyproc_kwargs(preexec, None)["preexec_fn"]
+
+        original = signal.getsignal(signal.SIGHUP)
+        try:
+            wrapper()
+            assert signal.getsignal(signal.SIGHUP) == signal.SIG_IGN
+        finally:
+            signal.signal(signal.SIGHUP, original)
+
+        assert called == [signal.SIG_IGN]
+
+    def test_ignore_sighup_without_a_preexec_function(self) -> None:
+        """Ignore SIGHUP in the child when there is no preexec_fn to call.
+
+        Given a spawn asked to ignore SIGHUP but given no preexec_fn,
+        When the wrapper that _spawn() would hand to ptyprocess is run,
+        Then SIGHUP is set to be ignored and nothing else is called.
+        """
+        child = pexpect.spawn(None, ignore_sighup=True)
+        wrapper = child._ptyproc_kwargs(None, None)["preexec_fn"]
+
+        original = signal.getsignal(signal.SIGHUP)
+        try:
+            wrapper()
+            assert signal.getsignal(signal.SIGHUP) == signal.SIG_IGN
+        finally:
+            signal.signal(signal.SIGHUP, original)
+
+    def test_read_nonblocking_reads_what_a_dead_child_left_behind(self) -> None:
+        """Read the output a child left in the pty after it exited.
+
+        Given a child that has exited with output still unread, and a pty that
+        only reports itself readable on the second look,
+        When :meth:`pexpect.spawn.read_nonblocking` is called,
+        Then the output is returned rather than EOF being raised.
+        """
+        child = pexpect.spawn("echo alpha")
+        deadline = time.time() + 5
+        while child.isalive() and time.time() < deadline:
+            time.sleep(0.05)
+
+        with (
+            mock.patch.object(child, "isalive", return_value=False),
+            mock.patch.object(child, "_ready", side_effect=[False, True]),
+        ):
+            assert child.read_nonblocking(size=5) == b"alpha"
+
+    def test_waitnoecho_without_a_timeout(self) -> None:
+        """Wait for echo to be switched off with no deadline of its own.
+
+        Given a child that turns echo off shortly after it starts,
+        When :meth:`pexpect.spawn.waitnoecho` is called with timeout=None, so
+        that it blocks until echo goes away,
+        Then it returns True.
+        """
+        child = pexpect.spawn(self.PYTHONBIN + " getch.py", echo=False)
+        assert child.waitnoecho(timeout=None)
 
     def test_bad_child_pid(self) -> None:
         """Assert bad condition error in isalive()."""
