@@ -176,7 +176,7 @@ class fdspawn(SpawnBase):
             ready to read. When -1 (default), use self.timeout. When 0, poll.
         :return: String containing the bytes read
         """
-        if os.name == "posix":
+        if os.name == "posix":  # pragma: no branch
             if timeout == -1:
                 timeout = self.timeout
             rlist = [self.child_fd]
