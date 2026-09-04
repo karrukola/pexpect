@@ -56,11 +56,20 @@ except Exception as e:
 
 print("Mock SSH client for tests. Do not enter real security info.")
 
+# The server name selects the login quirk under test.
+if server == 'certserver':
+    # An unknown host key: ssh asks before it asks for the password.
+    input('Are you sure you want to continue connecting (yes/no)? ')
+
 pw = getpass.getpass('password:')
 if pw != 's3cret':
     print('Permission denied!')
     sys.exit(1)
 
+if server == 'termserver':
+    input('terminal type? ')
+
+stopped_jobs_reported = False
 prompt = "$"
 while True:
     cmd = input(prompt)
@@ -79,5 +88,10 @@ while True:
     elif cmd == 'echo $?':
         print(0)
     elif cmd in ('exit', 'logout'):
-        print('Closed connection')
-        break
+        if server == 'jobserver' and not stopped_jobs_reported:
+            # A shell refuses the first exit while it has stopped jobs.
+            stopped_jobs_reported = True
+            print('There are stopped jobs.')
+        else:
+            print('Closed connection')
+            break
