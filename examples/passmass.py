@@ -1,6 +1,9 @@
 #!/usr/bin/env python
 
-'''Change passwords on the named machines. passmass host1 host2 host3 . . .
+"""Change passwords on the named machines.
+
+Usage: passmass host1 host2 host3 . . .
+
 Note that login shell prompt on remote machine must end in # or $.
 
 PEXPECT LICENSE
@@ -20,97 +23,95 @@ PEXPECT LICENSE
     ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF
     OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 
-'''
+"""
 
-from __future__ import print_function
-
-from __future__ import absolute_import
+import getpass
+import sys
+from pathlib import Path
 
 import pexpect
-import sys, getpass
 
+USAGE = """passmass host1 host2 host3 . . ."""
+COMMAND_PROMPT = "[$#] "
+TERMINAL_PROMPT = r"Terminal type\?"
+TERMINAL_TYPE = "vt100"
+SSH_NEWKEY = r"Are you sure you want to continue connecting \(yes/no\)\?"
 
-try:
-    raw_input
-except NameError:
-    raw_input = input
-
-
-USAGE = '''passmass host1 host2 host3 . . .'''
-COMMAND_PROMPT = '[$#] '
-TERMINAL_PROMPT = r'Terminal type\?'
-TERMINAL_TYPE = 'vt100'
-SSH_NEWKEY = r'Are you sure you want to continue connecting \(yes/no\)\?'
 
 def login(host, user, password):
+    """Log in to ``host`` over ssh and return the child sitting at a shell prompt."""
+    child = pexpect.spawn(f"ssh -l {user} {host}")
+    # SIM115: the child logs to it until it exits
+    fout = Path("LOG.TXT").open("wb")  # the child logs to it until it exits  # noqa: SIM115
+    child.logfile_read = fout  # use child.logfile to also log writes (passwords!)
 
-    child = pexpect.spawn('ssh -l %s %s'%(user, host))
-    fout = file ("LOG.TXT","wb")
-    child.logfile_read = fout #use child.logfile to also log writes (passwords!)
-
-    i = child.expect([pexpect.TIMEOUT, SSH_NEWKEY, '[Pp]assword: '])
-    if i == 0: # Timeout
-        print('ERROR!')
-        print('SSH could not login. Here is what SSH said:')
+    i = child.expect([pexpect.TIMEOUT, SSH_NEWKEY, "[Pp]assword: "])
+    if i == 0:  # Timeout
+        print("ERROR!")
+        print("SSH could not login. Here is what SSH said:")
         print(child.before, child.after)
-        sys.exit (1)
-    if i == 1: # SSH does not have the public key. Just accept it.
-        child.sendline ('yes')
-        child.expect ('[Pp]assword: ')
+        sys.exit(1)
+    if i == 1:  # SSH does not have the public key. Just accept it.
+        child.sendline("yes")
+        child.expect("[Pp]assword: ")
     child.sendline(password)
     # Now we are either at the command prompt or
     # the login process is asking for our terminal type.
-    i = child.expect (['Permission denied', TERMINAL_PROMPT, COMMAND_PROMPT])
+    i = child.expect(["Permission denied", TERMINAL_PROMPT, COMMAND_PROMPT])
     if i == 0:
-        print('Permission denied on host:', host)
-        sys.exit (1)
+        print("Permission denied on host:", host)
+        sys.exit(1)
     if i == 1:
-        child.sendline (TERMINAL_TYPE)
-        child.expect (COMMAND_PROMPT)
+        child.sendline(TERMINAL_TYPE)
+        child.expect(COMMAND_PROMPT)
     return child
 
-# (current) UNIX password:
-def change_password(child, user, oldpassword, newpassword):
 
-    child.sendline('passwd')
-    i = child.expect(['[Oo]ld [Pp]assword', '.current.*password', '[Nn]ew [Pp]assword'])
+# (current) UNIX password:
+def change_password(child, oldpassword, newpassword) -> None:
+    """Walk the remote passwd command from ``oldpassword`` to ``newpassword``."""
+    child.sendline("passwd")
+    i = child.expect(["[Oo]ld [Pp]assword", ".current.*password", "[Nn]ew [Pp]assword"])
     # Root does not require old password, so it gets to bypass the next step.
-    if i == 0 or i == 1:
+    if i in {0, 1}:
         child.sendline(oldpassword)
-        child.expect('[Nn]ew [Pp]assword')
+        child.expect("[Nn]ew [Pp]assword")
     child.sendline(newpassword)
-    i = child.expect(['[Nn]ew [Pp]assword', '[Rr]etype', '[Rr]e-enter'])
+    i = child.expect(["[Nn]ew [Pp]assword", "[Rr]etype", "[Rr]e-enter"])
     if i == 0:
-        print('Host did not like new password. Here is what it said...')
+        print("Host did not like new password. Here is what it said...")
         print(child.before)
-        child.send (chr(3)) # Ctrl-C
-        child.sendline('') # This should tell remote passwd command to quit.
+        child.send(chr(3))  # Ctrl-C
+        child.sendline("")  # This should tell remote passwd command to quit.
         return
     child.sendline(newpassword)
 
-def main():
 
+def main() -> int | None:
+    """Ask for the old and new passwords, then change them on every host given."""
     if len(sys.argv) <= 1:
         print(USAGE)
         return 1
 
-    user = raw_input('Username: ')
-    password = getpass.getpass('Current Password: ')
-    newpassword = getpass.getpass('New Password: ')
-    newpasswordconfirm = getpass.getpass('Confirm New Password: ')
+    user = input("Username: ")
+    password = getpass.getpass("Current Password: ")
+    newpassword = getpass.getpass("New Password: ")
+    newpasswordconfirm = getpass.getpass("Confirm New Password: ")
     if newpassword != newpasswordconfirm:
-        print('New Passwords do not match.')
+        print("New Passwords do not match.")
         return 1
 
     for host in sys.argv[1:]:
         child = login(host, user, password)
-        if child == None:
-            print('Could not login to host:', host)
+        if child is None:
+            print("Could not login to host:", host)
             continue
-        print('Changing password on host:', host)
-        change_password(child, user, password, newpassword)
+        print("Changing password on host:", host)
+        change_password(child, password, newpassword)
         child.expect(COMMAND_PROMPT)
-        child.sendline('exit')
+        child.sendline("exit")
+    return None
 
-if __name__ == '__main__':
+
+if __name__ == "__main__":
     main()

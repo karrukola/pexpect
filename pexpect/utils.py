@@ -1,165 +1,151 @@
-import os
-import sys
-import stat
-import select
-import time
+"""Helpers shared by the pexpect modules.
+
+Executable lookup, command line splitting, and EINTR-safe ``select``/``poll``
+wrappers.
+"""
+
 import errno
+import os
+import select
+import stat
+import sys
+import time
+from pathlib import Path
 
-try:
-    InterruptedError
-except NameError:
-    # Alias Python2 exception to Python3
-    InterruptedError = select.error
+# States of the little state machine used by split_command_line().
+_STATE_BASIC = 0
+_STATE_ESC = 1
+_STATE_SINGLEQUOTE = 2
+_STATE_DOUBLEQUOTE = 3
+# The state when consuming whitespace between commands.
+_STATE_WHITESPACE = 4
+# Quote characters and the state each one opens, plus the reverse mapping used
+# to recognise the closing quote.
+_QUOTE_STATES = {"'": _STATE_SINGLEQUOTE, '"': _STATE_DOUBLEQUOTE}
+_QUOTE_CHARS = {state: char for char, state in _QUOTE_STATES.items()}
 
-if sys.version_info[0] >= 3:
-    string_types = (str,)
-else:
-    string_types = (unicode, str)
 
-
-def is_executable_file(path):
-    """Checks that path is an executable regular file, or a symlink towards one.
+def is_executable_file(path: str) -> bool:
+    """Check that path is an executable regular file, or a symlink towards one.
 
     This is roughly ``os.path isfile(path) and os.access(path, os.X_OK)``.
     """
     # follow symlinks,
-    fpath = os.path.realpath(path)
+    fpath = Path(path).resolve()
 
-    if not os.path.isfile(fpath):
+    if not fpath.is_file():
         # non-files (directories, fifo, etc.)
         return False
 
-    mode = os.stat(fpath).st_mode
+    mode = fpath.stat().st_mode
 
-    if (sys.platform.startswith('sunos')
-            and os.getuid() == 0):
+    if sys.platform.startswith("sunos") and os.getuid() == 0:
         # When root on Solaris, os.X_OK is True for *all* files, irregardless
         # of their executability -- instead, any permission bit of any user,
         # group, or other is fine enough.
         #
         # (This may be true for other "Unix98" OS's such as HP-UX and AIX)
-        return bool(mode & (stat.S_IXUSR |
-                            stat.S_IXGRP |
-                            stat.S_IXOTH))
+        return bool(mode & (stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH))
 
     return os.access(fpath, os.X_OK)
 
 
-def which(filename, env=None):
-    '''This takes a given filename; tries to find it in the environment path;
-    then checks if it is executable. This returns the full path to the filename
-    if found and executable. Otherwise this returns None.'''
+def which(filename: str, env: dict[str, str] | None = None) -> str | None:
+    """Find filename on the environment path and check that it is executable.
 
+    Return the full path to the filename if it was found and is executable,
+    otherwise None.
+    """
     # Special case where filename contains an explicit path.
-    if os.path.dirname(filename) != '' and is_executable_file(filename):
+    if Path(filename).name != filename and is_executable_file(filename):
         return filename
-    if env is None:
-        env = os.environ
-    p = env.get('PATH')
-    if not p:
-        p = os.defpath
-    pathlist = p.split(os.pathsep)
-    for path in pathlist:
-        ff = os.path.join(path, filename)
-        if is_executable_file(ff):
-            return ff
+    search_path = (os.environ if env is None else env).get("PATH") or os.defpath
+    for path in search_path.split(os.pathsep):
+        candidate = str(Path(path) / filename)
+        if is_executable_file(candidate):
+            return candidate
     return None
 
 
-def split_command_line(command_line):
+def split_command_line(command_line: str) -> list[str]:
+    """Split a command line into a list of arguments.
 
-    '''This splits a command line into a list of arguments. It splits arguments
-    on spaces, but handles embedded quotes, doublequotes, and escaped
-    characters. It's impossible to do this with a regular expression, so I
-    wrote a little state machine to parse the command line. '''
-
+    It splits arguments on spaces, but handles embedded quotes, doublequotes,
+    and escaped characters. It's impossible to do this with a regular
+    expression, so I wrote a little state machine to parse the command line.
+    """
     arg_list = []
-    arg = ''
-
-    # Constants to name the states we can be in.
-    state_basic = 0
-    state_esc = 1
-    state_singlequote = 2
-    state_doublequote = 3
-    # The state when consuming whitespace between commands.
-    state_whitespace = 4
-    state = state_basic
+    arg = ""
+    state = _STATE_BASIC
 
     for c in command_line:
-        if state == state_basic or state == state_whitespace:
-            if c == '\\':
-                # Escape the next character
-                state = state_esc
-            elif c == r"'":
-                # Handle single quote
-                state = state_singlequote
-            elif c == r'"':
-                # Handle double quote
-                state = state_doublequote
-            elif c.isspace():
-                # Add arg to arg_list if we aren't in the middle of whitespace.
-                if state == state_whitespace:
-                    # Do nothing.
-                    None
-                else:
-                    arg_list.append(arg)
-                    arg = ''
-                    state = state_whitespace
-            else:
-                arg = arg + c
-                state = state_basic
-        elif state == state_esc:
+        if state == _STATE_ESC:
+            # Escaped character, whatever it is.
             arg = arg + c
-            state = state_basic
-        elif state == state_singlequote:
-            if c == r"'":
-                state = state_basic
+            state = _STATE_BASIC
+        elif state in _QUOTE_CHARS:
+            # Inside single or double quotes until the matching quote.
+            if c == _QUOTE_CHARS[state]:
+                state = _STATE_BASIC
             else:
                 arg = arg + c
-        elif state == state_doublequote:
-            if c == r'"':
-                state = state_basic
-            else:
-                arg = arg + c
+        elif c == "\\":
+            # Escape the next character
+            state = _STATE_ESC
+        elif c in _QUOTE_STATES:
+            state = _QUOTE_STATES[c]
+        elif not c.isspace():
+            arg = arg + c
+            state = _STATE_BASIC
+        elif state != _STATE_WHITESPACE:
+            # Add arg to arg_list if we aren't in the middle of whitespace.
+            arg_list.append(arg)
+            arg = ""
+            state = _STATE_WHITESPACE
 
-    if arg != '':
+    if arg != "":
         arg_list.append(arg)
     return arg_list
 
 
-def select_ignore_interrupts(iwtd, owtd, ewtd, timeout=None):
+def select_ignore_interrupts(
+    iwtd: list[int],
+    owtd: list[int],
+    ewtd: list[int],
+    timeout: float | None = None,
+) -> tuple[list[int], list[int], list[int]]:
+    """Wrap select.select() so that signals are ignored.
 
-    '''This is a wrapper around select.select() that ignores signals. If
-    select.select raises a select.error exception and errno is an EINTR
-    error then it is ignored. Mainly this is used to ignore sigwinch
-    (terminal resize). '''
-
-    # if select() is interrupted by a signal (errno==EINTR) then
-    # we loop back and enter the select() again.
+    If select.select() is interrupted by a signal (errno EINTR) then it is
+    entered again with the remaining timeout. Mainly this is used to ignore
+    sigwinch (terminal resize).
+    """
     if timeout is not None:
         end_time = time.time() + timeout
     while True:
         try:
             return select.select(iwtd, owtd, ewtd, timeout)
-        except InterruptedError:
-            err = sys.exc_info()[1]
+        # PERF203: the try/except IS the EINTR retry
+        except InterruptedError as err:  # the try/except IS the EINTR retry  # noqa: PERF203
             if err.args[0] == errno.EINTR:
                 # if we loop back we have to subtract the
                 # amount of time we already waited.
                 if timeout is not None:
                     timeout = end_time - time.time()
                     if timeout < 0:
-                        return([], [], [])
+                        return ([], [], [])
             else:
                 # something else caused the select.error, so
                 # this actually is an exception.
                 raise
 
 
-def poll_ignore_interrupts(fds, timeout=None):
-    '''Simple wrapper around poll to register file descriptors and
-    ignore signals.'''
+def poll_ignore_interrupts(fds: list[int], timeout: float | None = None) -> list[int]:
+    """Register file descriptors with poll() and ignore signals.
 
+    Return the file descriptors that became ready. If poll() is interrupted by
+    a signal (errno EINTR) then it is entered again with the remaining timeout.
+    """
     if timeout is not None:
         end_time = time.time() + timeout
 
@@ -172,8 +158,8 @@ def poll_ignore_interrupts(fds, timeout=None):
             timeout_ms = None if timeout is None else timeout * 1000
             results = poller.poll(timeout_ms)
             return [afd for afd, _ in results]
-        except InterruptedError:
-            err = sys.exc_info()[1]
+        # PERF203: the try/except IS the EINTR retry
+        except InterruptedError as err:  # the try/except IS the EINTR retry  # noqa: PERF203
             if err.args[0] == errno.EINTR:
                 # if we loop back we have to subtract the
                 # amount of time we already waited.

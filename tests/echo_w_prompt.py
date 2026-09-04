@@ -1,15 +1,9 @@
-# -*- coding: utf-8 -*-
-from __future__ import print_function
-
-try:
-    raw_input
-except NameError:
-    raw_input = input
+"""Echo every line read from stdin back with markers, until EOF."""
 
 while True:
     try:
-        a = raw_input('<in >')
+        a = input("<in >")
     except EOFError:
-        print('<eof>')
+        print("<eof>")
         break
-    print('<out>', a, sep='')
+    print("<out>", a, sep="")

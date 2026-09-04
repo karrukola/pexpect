@@ -1,7 +1,6 @@
 #!/usr/bin/env python
 
-'''These examples show how to integrate pexpect with pyte, an ANSI terminal
-emulator.
+"""Integrate pexpect with pyte, an ANSI terminal emulator.
 
 These examples were taken from:
 https://byexamples.github.io/byexample
@@ -33,15 +32,13 @@ PEXPECT LICENSE
     ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF
     OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 
-'''
+"""
 
-from __future__ import print_function
-from __future__ import absolute_import
-from __future__ import unicode_literals
+import os
+
+import pyte
 
 import pexpect
-import pyte
-import os
 
 # The geometry of the terminal. Typically this is 24x80
 # but we are going to us set a much smaller terminal
@@ -53,28 +50,30 @@ ROWS, COLS = 10, 40
 screen = pyte.Screen(COLS, ROWS)
 stream = pyte.Stream(screen)
 
-# Spawn a process using pexpect.spawn as usual
-# with a particularity: it sets the geometry of the terminal
-# using the environment variables *and* using the 'dimensions'
-# parameter of pexpect.spawn.
-# This is needed because no all the program honors the geometry
-# set by pexpect or by the env vars.
+
 def spawn_process(cmd):
+    """Spawn ``cmd`` with the terminal geometry set two ways over.
+
+    The geometry goes into the environment variables *and* into the
+    'dimensions' parameter of pexpect.spawn, because not every program honors
+    the geometry set by pexpect or by the env vars.
+    """
     env = os.environ.copy()
-    env.update({'LINES': str(ROWS), 'COLUMNS': str(COLS)})
+    env.update({"LINES": str(ROWS), "COLUMNS": str(COLS)})
 
-    return pexpect.spawn(cmd, echo=False, encoding='utf-8', dimensions=(ROWS, COLS), env=env)
+    return pexpect.spawn(cmd, echo=False, encoding="utf-8", dimensions=(ROWS, COLS), env=env)
 
-# Send the raw output to pyte.Stream and get the emulated output
-# from pyte.Screen.
-# In each call we *reset* the display so we don't get the same
-# emulated output twice.
-#
-# Pyte emulates the whole terminal so it will return us ROWS rows
-# of each COLS columns each one completed with spaces.
-#
-# Optionally we strip the whitespace on the right and any empty line
-def emulate_ansi_terminal(raw_output, clean=True):
+
+def emulate_ansi_terminal(raw_output, *, clean=True):
+    """Send ``raw_output`` to pyte.Stream and return the emulated pyte.Screen.
+
+    In each call we *reset* the display so we don't get the same emulated
+    output twice.
+
+    Pyte emulates the whole terminal so it will return us ROWS rows of COLS
+    columns each one completed with spaces. With ``clean`` we strip the
+    whitespace on the right and any empty line.
+    """
     stream.feed(raw_output)
 
     lines = screen.display
@@ -84,36 +83,42 @@ def emulate_ansi_terminal(raw_output, clean=True):
         lines = (line.rstrip() for line in lines)
         lines = (line for line in lines if line)
 
-    return '\n'.join(lines)
+    return "\n".join(lines)
 
-def pprint(out):
+
+def pprint(out) -> None:
+    """Print ``out`` framed by two rules as wide as the emulated terminal."""
     print("-" * COLS)
     print(out)
     print("-" * COLS)
+
 
 print("\nFirst example: echo a message with ANSI color sequences.")
 child = spawn_process(r'echo -e "\033[31mThis message should not be in red\033[0m"')
 child.expect(pexpect.EOF)
 out = emulate_ansi_terminal(child.before)
 
-print("This should *not* print any escape sequence,",
-      "those were emulated and discarded by pyte.\n")
+print(
+    "This should *not* print any escape sequence,", "those were emulated and discarded by pyte.\n"
+)
 pprint(out)
 
 print("\nSecond example: echo a very large message.")
-msg = ("aaaabbbb" * 8)
-child = spawn_process('echo "%s"' % msg)
+msg = "aaaabbbb" * 8
+child = spawn_process(f'echo "{msg}"')
 child.expect(pexpect.EOF)
 out = emulate_ansi_terminal(child.before)
 
-print("This should print the message in *two* lines because we",
-      "configured a terminal very small and the message will",
-      "not fit in one line.\n")
+print(
+    "This should print the message in *two* lines because we",
+    "configured a terminal very small and the message will",
+    "not fit in one line.\n",
+)
 pprint(out)
 
 
 print("\nThird example: run the less program.")
-child = spawn_process('''bash -c "head -n7 '%s' | less"''' % __file__)
+child = spawn_process(f'''bash -c "head -n7 '{__file__}' | less"''')
 child.expect(pexpect.TIMEOUT, timeout=5)
 out = emulate_ansi_terminal(child.before, clean=False)
 

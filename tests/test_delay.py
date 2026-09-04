@@ -1,17 +1,15 @@
-# -*- coding: utf-8 -*-
+"""Tests for the delaybeforesend and delayafterread attributes."""
 
-from . import PexpectTestCase
 import pexpect
 
+from . import pexpect_test_case
 
-class TestCaseDelay(PexpectTestCase.PexpectTestCase):
-    """
-    Tests for various delay attributes.
-    """
-    def test_delaybeforesend(self):
-        """
-        Test various values for delaybeforesend.
-        """
+
+class TestCaseDelay(pexpect_test_case.PexpectTestCase):
+    """Tests for various delay attributes."""
+
+    def test_delaybeforesend(self) -> None:
+        """Test various values for delaybeforesend."""
         p = pexpect.spawn("cat")
 
         p.delaybeforesend = 1
@@ -26,10 +24,8 @@ class TestCaseDelay(PexpectTestCase.PexpectTestCase):
         p.sendline("line 3")
         p.expect("line 3")
 
-    def test_delayafterread(self):
-        """
-        Test various values for delayafterread.
-        """
+    def test_delayafterread(self) -> None:
+        """Test various values for delayafterread."""
         p = pexpect.spawn("cat")
 
         p.delayafterread = 1

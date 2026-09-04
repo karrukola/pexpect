@@ -1,5 +1,6 @@
-'''Pexpect is a Python module for spawning child applications and controlling
-them automatically. Pexpect can be used for automating interactive applications
+"""Spawn child applications and control them automatically.
+
+Pexpect can be used for automating interactive applications
 such as ssh, ftp, passwd, telnet, etc. It can be used to automate setup
 scripts for duplicating software package installations on different servers. It
 can be used for automated software testing. Pexpect is in the spirit of Don
@@ -17,7 +18,7 @@ output. This is a handy replacement for os.system().
 
 For example::
 
-    pexpect.run('ls -la')
+    pexpect.run("ls -la")
 
 The spawn class is the more powerful interface to the Pexpect system. You can
 use this to spawn a child program then interact with it by sending input and
@@ -25,14 +26,14 @@ expecting responses (waiting for patterns in the child's output).
 
 For example::
 
-    child = pexpect.spawn('scp foo user@example.com:.')
-    child.expect('Password:')
+    child = pexpect.spawn("scp foo user@example.com:.")
+    child.expect("Password:")
     child.sendline(mypassword)
 
 Context manager can be used for the spawn() function::
 
-    with pexpect.spawn('scp foo user@example.com:.') as child:
-        child.expect('Password:')
+    with pexpect.spawn("scp foo user@example.com:.") as child:
+        child.expect("Password:")
         child.sendline(mypassword)
 
 This works even for commands that ask for passwords or other input outside of
@@ -67,25 +68,40 @@ PEXPECT LICENSE
     ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF
     OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 
-'''
+"""
 
 import sys
-PY3 = (sys.version_info[0] >= 3)
 
-from .exceptions import ExceptionPexpect, EOF, TIMEOUT
-from .utils import split_command_line, which, is_executable_file
+from .exceptions import EOF, TIMEOUT, ExceptionPexpect
 from .expect import Expecter, searcher_re, searcher_string
+from .utils import is_executable_file, split_command_line, which
 
-if sys.platform != 'win32':
+# Python 2 is no longer supported; this flag survives only because
+# `tests/test_run.py` still reads it. Remove both together.
+if sys.platform != "win32":
     # On Unix, these are available at the top level for backwards compatibility
     from .pty_spawn import spawn, spawnu
     from .run import run, runu
 
-__version__ = '4.9.0'
-__revision__ = ''
-__all__ = ['ExceptionPexpect', 'EOF', 'TIMEOUT', 'spawn', 'spawnu', 'run', 'runu',
-           'which', 'split_command_line', '__version__', '__revision__']
-
+__version__ = "4.9.0"
+__revision__ = ""
+__all__ = [
+    "EOF",
+    "TIMEOUT",
+    "ExceptionPexpect",
+    "Expecter",
+    "__revision__",
+    "__version__",
+    "is_executable_file",
+    "run",
+    "runu",
+    "searcher_re",
+    "searcher_string",
+    "spawn",
+    "spawnu",
+    "split_command_line",
+    "which",
+]
 
 
 # vim: set shiftround expandtab tabstop=4 shiftwidth=4 ft=python autoindent :

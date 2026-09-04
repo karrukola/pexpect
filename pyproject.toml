@@ -77,7 +77,7 @@ url = "https://pypi.org/simple"
 default = true
 
 [tool.coverage.run]
-source = "pexpect"
+source = ["pexpect"]
 parallel = true
 
 
@@ -98,6 +98,9 @@ lint.ignore = [
     "SLF001", # accessing protected members
     "T201",   # allow usage of print
     "TD",     # one-man shop here
+    # LICENSE at the repo root covers distribution; per-file headers add drift
+    # without legal upside.
+    "CPY001",
 ]
 lint.fixable = [ "ALL" ]
 lint.unfixable = [
@@ -105,4 +108,67 @@ lint.unfixable = [
 ]
 lint.per-file-ignores."tests/*" = [
     "S101",   # pytest works with assert
+]
+
+# Annotations are maintained for the shipped library and its test suite only.
+lint.per-file-ignores."examples/*" = [ "ANN" ]
+lint.per-file-ignores."tools/*" = [ "ANN" ]
+lint.per-file-ignores."doc/*" = [ "ANN" ]
+
+# The names, arities and boolean flags below are pexpect's documented public
+# interface. Renaming a class or module, splitting a signature or making a flag
+# keyword-only would break every downstream caller, so these rules are silenced
+# per file rather than obeyed. New modules are still checked.
+lint.per-file-ignores."pexpect/ANSI.py" = [
+    "N801",   # `term` is public API
+    "N802",   # `DoEmit` and friends are public FSM action callbacks
+    "N999",   # imported as `pexpect.ANSI`
+]
+lint.per-file-ignores."pexpect/FSM.py" = [
+    "N802",   # `BeginBuildNumber` and friends are public FSM action callbacks
+    "N818",   # `ExceptionFSM` is public API
+    "N999",   # imported as `pexpect.FSM`
+]
+lint.per-file-ignores."pexpect/exceptions.py" = [
+    "N818",   # `ExceptionPexpect` is public API
+]
+lint.per-file-ignores."pexpect/expect.py" = [
+    "N801",   # `searcher_string` and `searcher_re` are public API
+]
+lint.per-file-ignores."pexpect/fdpexpect.py" = [
+    "FBT001", "FBT002",  # public positional/keyword bool flags
+    "N801",   # `fdspawn` is public API
+    "PLR0913", "PLR0917",  # `fdspawn.__init__` signature is public API
+]
+lint.per-file-ignores."pexpect/popen_spawn.py" = [
+    "PLR0913", "PLR0917",  # `PopenSpawn.__init__` signature is public API
+]
+lint.per-file-ignores."pexpect/pty_spawn.py" = [
+    "FBT001", "FBT002",  # public positional/keyword bool flags, e.g. `close(force=True)`
+    "N801",   # `spawn` is public API
+    "PLR0913", "PLR0917",  # `spawn.__init__` signature is public API
+]
+lint.per-file-ignores."pexpect/pxssh.py" = [
+    "FBT001", "FBT002",  # public positional/keyword bool flags
+    "N801",   # `pxssh` is public API
+    "PLR0913", "PLR0917",  # `pxssh.login` signature is public API
+]
+lint.per-file-ignores."pexpect/replwrap.py" = [
+    "FBT001", "FBT002", "FBT003",  # public bool flags
+    "PLR0913", "PLR0917",  # `REPLWrapper.__init__` signature is public API
+]
+lint.per-file-ignores."pexpect/run.py" = [
+    "FBT001", "FBT002",  # public positional/keyword bool flags
+    "PLR0913", "PLR0917",  # `run` and `runu` signatures are public API
+]
+lint.per-file-ignores."pexpect/screen.py" = [
+    "N801",   # `screen` is public API
+]
+lint.per-file-ignores."pexpect/socket_pexpect.py" = [
+    "FBT001", "FBT002",  # public positional/keyword bool flags
+    "PLR0913", "PLR0917",  # `SocketSpawn.__init__` signature is public API
+]
+lint.per-file-ignores."pexpect/spawnbase.py" = [
+    "FBT001", "FBT002",  # public positional/keyword bool flags
+    "PLR0913", "PLR0917",  # `SpawnBase.__init__` signature is public API
 ]

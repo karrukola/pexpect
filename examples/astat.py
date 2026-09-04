@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 
-'''This runs Apache Status on the remote host and returns the number of requests per second.
+"""Run Apache Status on a remote host and print the number of requests per second.
 
 ./astat.py [-s server_hostname] [-u username] [-p password]
     -s : hostname of the remote server to login to.
@@ -28,72 +28,55 @@ PEXPECT LICENSE
     ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF
     OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 
-'''
+"""
 
-from __future__ import print_function
-
-from __future__ import absolute_import
-
-import os
-import sys
 import getopt
 import getpass
+import os
+import sys
+
 from pexpect import pxssh
 
 
-try:
-    raw_input
-except NameError:
-    raw_input = input
-
-
-def exit_with_usage():
-
-    print(globals()['__doc__'])
+def exit_with_usage() -> None:
+    """Print this script's docstring as usage and exit with a failure status."""
+    print(globals()["__doc__"])
     os._exit(1)
 
 
-def main():
-
+def main() -> None:
+    """Log in over ssh and print the Apache request rate."""
     ######################################################################
     ## Parse the options, arguments, get ready, etc.
     ######################################################################
     try:
-        optlist, args = getopt.getopt(sys.argv[1:], 'h?s:u:p:', ['help','h','?'])
-    except Exception as e:
+        optlist, args = getopt.getopt(sys.argv[1:], "h?s:u:p:", ["help", "h", "?"])
+    except getopt.GetoptError as e:
         print(str(e))
         exit_with_usage()
     options = dict(optlist)
     if len(args) > 1:
         exit_with_usage()
 
-    if [elem for elem in options if elem in ['-h','--h','-?','--?','--help']]:
+    if [elem for elem in options if elem in ["-h", "--h", "-?", "--?", "--help"]]:
         print("Help:")
         exit_with_usage()
 
-    if '-s' in options:
-        hostname = options['-s']
-    else:
-        hostname = raw_input('hostname: ')
-    if '-u' in options:
-        username = options['-u']
-    else:
-        username = raw_input('username: ')
-    if '-p' in options:
-        password = options['-p']
-    else:
-        password = getpass.getpass('password: ')
+    hostname = options["-s"] if "-s" in options else input("hostname: ")
+    username = options["-u"] if "-u" in options else input("username: ")
+    password = options["-p"] if "-p" in options else getpass.getpass("password: ")
 
     #
     # Login via SSH
     #
     p = pxssh.pxssh()
     p.login(hostname, username, password)
-    p.sendline('apachectl status')
-    p.expect(r'([0-9]+\.[0-9]+)\s*requests/sec')
+    p.sendline("apachectl status")
+    p.expect(r"([0-9]+\.[0-9]+)\s*requests/sec")
     requests_per_second = p.match.groups()[0]
     p.logout()
     print(requests_per_second)
+
 
 if __name__ == "__main__":
     main()

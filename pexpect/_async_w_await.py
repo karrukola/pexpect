@@ -3,22 +3,25 @@
 These keywords replaced ``@asyncio.coroutine`` and ``yield from`` from
 Python 3.5 onwards.
 """
+
+from __future__ import annotations
+
 import asyncio
 import errno
 import signal
-from sys import version_info as py_version_info
+from typing import TYPE_CHECKING
 
 from pexpect import EOF
 
-if py_version_info >= (3, 7):
-    # get_running_loop, new in 3.7, is preferred to get_event_loop
-    _loop_getter = asyncio.get_running_loop
-else:
-    # Deprecation warning since 3.10
-    _loop_getter = asyncio.get_event_loop
+if TYPE_CHECKING:
+    from pexpect.expect import Expecter
+    from pexpect.replwrap import REPLWrapper
+
+_loop_getter = asyncio.get_running_loop
 
 
-async def expect_async(expecter, timeout=None):
+async def expect_async(expecter: Expecter, timeout: float | None = None) -> int:
+    """Wait for one of the expecter's patterns and return its index."""
     # First process data that was previously read - if it maches, we don't need
     # async stuff.
     idx = expecter.existing_data()
@@ -42,7 +45,10 @@ async def expect_async(expecter, timeout=None):
         return expecter.timeout(exc)
 
 
-async def repl_run_command_async(repl, cmdlines, timeout=-1):
+async def repl_run_command_async(
+    repl: REPLWrapper, cmdlines: list[str], timeout: float | None = -1
+) -> str:
+    """Feed ``cmdlines`` to the REPL one at a time and return its output."""
     res = []
     repl.child.sendline(cmdlines[0])
     for line in cmdlines[1:]:
@@ -56,31 +62,39 @@ async def repl_run_command_async(repl, cmdlines, timeout=-1):
         # We got the continuation prompt - command was incomplete
         repl.child.kill(signal.SIGINT)
         await repl._expect_prompt(timeout=1, async_=True)
-        raise ValueError("Continuation prompt found - input was incomplete:")
-    return "".join(res + [repl.child.before])
+        msg = "Continuation prompt found - input was incomplete:"
+        raise ValueError(msg)
+    return "".join([*res, repl.child.before])
 
 
 class PatternWaiter(asyncio.Protocol):
-    transport = None
+    """Resolve a future as soon as the expecter matches the incoming data."""
 
-    def set_expecter(self, expecter):
+    transport: asyncio.ReadTransport | None = None
+
+    def set_expecter(self, expecter: Expecter) -> None:
+        """Bind this protocol to ``expecter`` and arm a fresh future."""
         self.expecter = expecter
         self.fut = asyncio.Future()
 
-    def found(self, result):
+    def found(self, result: int) -> None:
+        """Complete the future with the index of the matched pattern."""
         if not self.fut.done():
             self.fut.set_result(result)
             self.transport.pause_reading()
 
-    def error(self, exc):
+    def error(self, exc: BaseException) -> None:
+        """Complete the future with an exception."""
         if not self.fut.done():
             self.fut.set_exception(exc)
             self.transport.pause_reading()
 
-    def connection_made(self, transport):
+    def connection_made(self, transport: asyncio.ReadTransport) -> None:
+        """Remember the transport so reading can be paused later."""
         self.transport = transport
 
-    def data_received(self, data):
+    def data_received(self, data: bytes) -> None:
+        """Feed newly read data to the expecter, resolving the future on a match."""
         spawn = self.expecter.spawn
         s = spawn._decoder.decode(data)
         spawn._log(s, "read")
@@ -95,11 +109,13 @@ class PatternWaiter(asyncio.Protocol):
             if index is not None:
                 # Found a match
                 self.found(index)
-        except Exception as exc:
+        # BLE001: any failure must reach the awaited future
+        except Exception as exc:  # any failure must reach the awaiter  # noqa: BLE001
             self.expecter.errored()
             self.error(exc)
 
-    def eof_received(self):
+    def eof_received(self) -> None:
+        """Resolve the future with the expecter's end-of-file result."""
         # N.B. If this gets called, async will close the pipe (the spawn object)
         # for us
         try:
@@ -110,7 +126,8 @@ class PatternWaiter(asyncio.Protocol):
         else:
             self.found(index)
 
-    def connection_lost(self, exc):
+    def connection_lost(self, exc: Exception | None) -> None:
+        """Treat an EIO error as end-of-file, and report anything else."""
         if isinstance(exc, OSError) and exc.errno == errno.EIO:
             # We may get here without eof_received being called, e.g on Linux
             self.eof_received()

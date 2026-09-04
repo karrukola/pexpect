@@ -1,7 +1,9 @@
 #!/usr/bin/env python
 
-'''This starts the python interpreter; captures the startup message; then gives
-the user interactive control over the session. Why? For fun...
+"""Start the python interpreter and hand the session over to the user.
+
+Captures the startup message; then gives the user interactive control over the
+session. Why? For fun...
 
 PEXPECT LICENSE
 
@@ -20,30 +22,25 @@ PEXPECT LICENSE
     ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF
     OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 
-'''
-
-from __future__ import absolute_import
-from __future__ import print_function
-from __future__ import unicode_literals
+"""
 
 import pexpect
 
-# Don't do this unless you like being John Malkovich
-# c = pexpect.spawnu('/usr/bin/env python ./python.py')
+# Spawning this very script instead of the interpreter would drop you inside
+# yourself; don't do that unless you like being John Malkovich.
 
 # Note that, for Python 3 compatibility reasons, we are using spawnu and
 # importing unicode_literals (above). spawnu accepts Unicode input and
 # unicode_literals makes all string literals in this script Unicode by default.
-c = pexpect.spawnu('/usr/bin/env python')
+c = pexpect.spawnu("/usr/bin/env python")
 
-c.expect('>>>')
-print('And now for something completely different...')
-print(''.join(reversed((c.before))))
-print('Yes, it\'s python, but it\'s backwards.')
+c.expect(">>>")
+print("And now for something completely different...")
+print("".join(reversed(c.before)))
+print("Yes, it's python, but it's backwards.")
 print()
-print('Escape character is \'^]\'.')
-print(c.after, end=' ')
+print("Escape character is '^]'.")
+print(c.after, end=" ")
 c.interact()
 c.kill(1)
-print('is alive:', c.isalive())
-
+print("is alive:", c.isalive())

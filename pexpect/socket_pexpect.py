@@ -1,5 +1,7 @@
-"""This is like :mod:`pexpect`, but it will work with any socket that you
-pass it. You are responsible for opening and closing the socket.
+"""Pexpect driven by a socket you own.
+
+Like :mod:`pexpect`, but it will work with any socket that you pass it. You
+are responsible for opening and closing the socket.
 
 PEXPECT LICENSE
 
@@ -21,33 +23,37 @@ PEXPECT LICENSE
 """
 
 import socket
+from collections.abc import Iterable, Iterator
 from contextlib import contextmanager
+from typing import IO
 
-from .exceptions import TIMEOUT, EOF
+from .exceptions import EOF, TIMEOUT
 from .spawnbase import SpawnBase
 
 __all__ = ["SocketSpawn"]
 
 
 class SocketSpawn(SpawnBase):
-    """This is like :mod:`pexpect.fdpexpect` but uses the cross-platform python socket api,
-    rather than the unix-specific file descriptor api. Thus, it works with
-    remote connections on both unix and windows."""
+    """Like :mod:`pexpect.fdpexpect`, but over the cross-platform socket api.
+
+    Using the python socket api rather than the unix-specific file descriptor
+    api means this works with remote connections on both unix and windows.
+    """
 
     def __init__(
         self,
         socket: socket.socket,
-        args=None,
-        timeout=30,
-        maxread=2000,
-        searchwindowsize=None,
-        logfile=None,
-        encoding=None,
-        codec_errors="strict",
-        use_poll=False,
-    ):
-        """This takes an open socket."""
-
+        # ARG002: signature parity with spawn
+        args: None = None,  # accepted for signature parity with `spawn`  # noqa: ARG002
+        timeout: float | None = 30,
+        maxread: int = 2000,
+        searchwindowsize: int | None = None,
+        logfile: IO[bytes] | IO[str] | None = None,
+        encoding: str | None = None,
+        codec_errors: str = "strict",
+        use_poll: bool = False,  # positional flag is public API
+    ) -> None:
+        """Take an open socket."""
         self.args = None
         self.command = None
         SpawnBase.__init__(
@@ -62,10 +68,10 @@ class SocketSpawn(SpawnBase):
         self.socket = socket
         self.child_fd = socket.fileno()
         self.closed = False
-        self.name = "<socket %s>" % socket
+        self.name = f"<socket {socket}>"
         self.use_poll = use_poll
 
-    def close(self):
+    def close(self) -> None:
         """Close the socket.
 
         Calling this method a second time does nothing, but if the file
@@ -80,12 +86,12 @@ class SocketSpawn(SpawnBase):
         self.child_fd = -1
         self.closed = True
 
-    def isalive(self):
-        """ Alive if the fileno is valid """
+    def isalive(self) -> bool:
+        """Alive if the fileno is valid."""
         return self.socket.fileno() >= 0
 
-    def send(self, s) -> int:
-        """Write to socket, return number of bytes written"""
+    def send(self, s: str | bytes) -> int:
+        """Write to socket, return number of bytes written."""
         s = self._coerce_send_string(s)
         self._log(s, "send")
 
@@ -93,22 +99,22 @@ class SocketSpawn(SpawnBase):
         self.socket.sendall(b)
         return len(b)
 
-    def sendline(self, s) -> int:
-        """Write to socket with trailing newline, return number of bytes written"""
+    def sendline(self, s: str | bytes) -> int:
+        """Write to socket with trailing newline, return number of bytes written."""
         s = self._coerce_send_string(s)
         return self.send(s + self.linesep)
 
-    def write(self, s):
-        """Write to socket, return None"""
+    def write(self, s: str | bytes) -> None:
+        """Write to socket, return None."""
         self.send(s)
 
-    def writelines(self, sequence):
-        "Call self.write() for each item in sequence"
+    def writelines(self, sequence: Iterable[str | bytes]) -> None:
+        """Call self.write() for each item in sequence."""
         for s in sequence:
             self.write(s)
 
     @contextmanager
-    def _timeout(self, timeout):
+    def _timeout(self, timeout: float | None) -> Iterator[None]:
         saved_timeout = self.socket.gettimeout()
         try:
             self.socket.settimeout(timeout)
@@ -116,9 +122,8 @@ class SocketSpawn(SpawnBase):
         finally:
             self.socket.settimeout(saved_timeout)
 
-    def read_nonblocking(self, size=1, timeout=-1):
-        """
-        Read from the file descriptor and return the result as a string.
+    def read_nonblocking(self, size: int = 1, timeout: float | None = -1) -> bytes:
+        """Read from the file descriptor and return the result as a string.
 
         The read_nonblocking method of :class:`SpawnBase` assumes that a call
         to os.read will not block (timeout parameter is ignored). This is not
@@ -137,9 +142,11 @@ class SocketSpawn(SpawnBase):
         try:
             with self._timeout(timeout):
                 s = self.socket.recv(size)
-                if s == b'':
+                if s == b"":
                     self.flag_eof = True
-                    raise EOF("Socket closed")
+                    msg = "Socket closed"
+                    raise EOF(msg)
                 return s
-        except socket.timeout:
-            raise TIMEOUT("Timeout exceeded.")
+        except TimeoutError as err:
+            msg = "Timeout exceeded."
+            raise TIMEOUT(msg) from err
