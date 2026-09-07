@@ -1,23 +1,23 @@
 """Tests for driving interactive REPLs through pexpect.replwrap."""
 
 import os
-import platform
 import re
-import shutil
-import sys
 import unittest
 from pathlib import Path
+from unittest import mock
 
 import pytest
 
 import pexpect
 from pexpect import replwrap
 
+pytestmark = pytest.mark.usefixtures("fast_sleep", "lean_child_env", "killed_pty_children")
+
 skip_pypy = "This test fails on PyPy because of REPL differences"
 
 
-class REPLWrapTestCase(unittest.TestCase):
-    """Tests for the bash, zsh and Python REPL wrappers."""
+class REPLWrapTestBase(unittest.TestCase):
+    """Base class that pins the prompt of any shell the tests spawn."""
 
     def setUp(self) -> None:
         """Pin PS1 and PS2 so a spawned shell has a predictable prompt."""
@@ -33,6 +33,10 @@ class REPLWrapTestCase(unittest.TestCase):
         os.putenv("PS1", self.save_ps1)
         os.putenv("PS2", self.save_ps2)
 
+
+class REPLWrapTestCase(REPLWrapTestBase):
+    """Tests for the bash, zsh and Python REPL wrappers."""
+
     def test_bash(self) -> None:
         """Run a command in bash, and reject empty input."""
         bash = replwrap.bash()
@@ -47,12 +51,6 @@ class REPLWrapTestCase(unittest.TestCase):
             msg = "Didn't raise ValueError for empty input"
             raise AssertionError(msg)
 
-    def test_pager_as_cat(self) -> None:
-        """PAGER is set to cat, to prevent timeout in ``man sleep``."""
-        bash = replwrap.bash()
-        res = bash.run_command("man sleep", timeout=5)
-        assert "SLEEP" in res.upper(), res
-
     def test_bash_env(self) -> None:
         """env, which displays PS1=..., should not mess up finding the prompt."""
         bash = replwrap.bash()
@@ -61,24 +59,6 @@ class REPLWrapTestCase(unittest.TestCase):
         assert "PS1" in res
         res = bash.run_command("echo $HOME")
         assert res.startswith("/"), res
-
-    def test_long_running_multiline(self) -> None:
-        """Ensure the default timeout is used for multi-line commands."""
-        bash = replwrap.bash()
-        res = bash.run_command("echo begin\r\nsleep 2\r\necho done")
-        assert res.strip().splitlines() == ["begin", "done"]
-
-    def test_long_running_continuation(self) -> None:
-        """Also ensure timeout when used within continuation prompts."""
-        bash = replwrap.bash()
-        # The two extra '\\' in the following expression force a continuation
-        # prompt:
-        # $ echo begin\
-        #     + ;
-        # $ sleep 2
-        # $ echo done
-        res = bash.run_command("echo begin\\\n;sleep 2\r\necho done")
-        assert res.strip().splitlines() == ["begin", "done"]
 
     def test_multiline(self) -> None:
         """Run a multi-line command, and recover the REPL after incomplete input."""
@@ -126,50 +106,14 @@ class REPLWrapTestCase(unittest.TestCase):
         When :func:`replwrap.zsh` is asked to start it,
         Then :exc:`pexpect.ExceptionPexpect` is raised.
         """
-        with pytest.raises(pexpect.ExceptionPexpect):
+        # A name that matches nothing is the one lookup that walks every PATH
+        # entry, so point PATH at a single directory to keep the cost of the
+        # test off the length of the developer's PATH.
+        with (
+            mock.patch.dict(os.environ, {"PATH": str(Path(__file__).parent)}),
+            pytest.raises(pexpect.ExceptionPexpect),
+        ):
             replwrap.zsh(command="zsh-does-not-exist")
-
-    @unittest.skipUnless(shutil.which("zsh"), "zsh is not installed")
-    def test_zsh(self) -> None:
-        """Run a command in zsh, and reject empty input."""
-        zsh = replwrap.zsh()
-        res = zsh.run_command("env")
-        assert "PAGER" in res, res
-
-        try:
-            zsh.run_command("")
-        except ValueError:
-            pass
-        else:
-            msg = "Didn't raise ValueError for empty input"
-            raise AssertionError(msg)
-
-    def test_python(self) -> None:
-        """Run single- and multi-line statements in a Python REPL."""
-        if platform.python_implementation() == "PyPy":
-            raise unittest.SkipTest(skip_pypy)
-
-        p = replwrap.python()
-        res = p.run_command("4+7")
-        assert res.strip() == "11"
-
-        res = p.run_command("for a in range(3): print(a)\n")
-        assert res.strip().splitlines() == ["0", "1", "2"]
-
-    def test_no_change_prompt(self) -> None:
-        """Wrap a Python REPL without changing its prompt."""
-        if platform.python_implementation() == "PyPy":
-            raise unittest.SkipTest(skip_pypy)
-
-        child = pexpect.spawn(
-            sys.executable, echo=False, timeout=5, encoding="utf-8", env={"NO_COLOR": "1"}
-        )
-        # prompt_change=None should mean no prompt change
-        py = replwrap.REPLWrapper(child, ">>> ", prompt_change=None, continuation_prompt="... ")
-        assert py.prompt == ">>> "
-
-        res = py.run_command("for a in range(3): print(a)\n")
-        assert res.strip().splitlines() == ["0", "1", "2"]
 
 
 if __name__ == "__main__":

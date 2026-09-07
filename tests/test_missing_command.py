@@ -18,7 +18,9 @@ OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 
 """
 
+import os
 import unittest
+from unittest import mock
 
 import pytest
 
@@ -26,13 +28,21 @@ import pexpect
 
 from . import pexpect_test_case
 
+pytestmark = pytest.mark.usefixtures("fast_sleep", "killed_pty_children")
+
 
 class MissingCommandTestCase(pexpect_test_case.PexpectTestCase):
     """Tests for spawning a command that does not exist."""
 
     def test_missing_command(self) -> None:
         """Raise ExceptionPexpect when the command cannot be found."""
-        with pytest.raises(pexpect.ExceptionPexpect):
+        # A missing command is the one lookup that walks every PATH entry, so
+        # the cost of the test is the cost of the developer's PATH. Point it at
+        # a single directory: the test only cares that the command is absent.
+        with (
+            mock.patch.dict(os.environ, {"PATH": self.project_dir}),
+            pytest.raises(pexpect.ExceptionPexpect),
+        ):
             pexpect.spawn("ZXQYQZX")
 
 

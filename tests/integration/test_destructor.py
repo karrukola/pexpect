@@ -23,13 +23,20 @@ import platform
 import time
 import unittest
 
-import pexpect
+import pytest
 
-from . import pexpect_test_case
+import pexpect
+from tests import pexpect_test_case
+
+pytestmark = pytest.mark.usefixtures("fast_sleep")
 
 
 class TestCaseDestructor(pexpect_test_case.PexpectTestCase):
-    """Tests that spawn objects release their pty on garbage collection."""
+    """Tests that spawn objects release their pty on garbage collection.
+
+    Twelve Python interpreters start over the course of the one test below, so
+    it belongs here rather than under the suite's time budget.
+    """
 
     def test_destructor(self) -> str | None:
         """Reuse the same pty descriptors after each batch of spawns is collected."""

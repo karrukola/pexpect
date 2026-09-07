@@ -21,9 +21,12 @@ OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 import os
 import unittest
 
-import pexpect
+import pytest
 
-from . import pexpect_test_case
+import pexpect
+from tests import pexpect_test_case
+
+pytestmark = pytest.mark.usefixtures("fast_sleep", "child_coverage")
 
 
 class InteractTestCase(pexpect_test_case.PexpectTestCase):

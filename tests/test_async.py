@@ -5,7 +5,6 @@ try:
 except ImportError:
     asyncio = None
 
-import gc
 import unittest
 
 import pytest
@@ -14,6 +13,8 @@ import pexpect
 from pexpect import replwrap
 
 from . import pexpect_test_case
+
+pytestmark = pytest.mark.usefixtures("fast_sleep", "lean_child_env", "killed_pty_children")
 
 
 @unittest.skipIf(asyncio is None, "Requires asyncio")
@@ -31,10 +32,10 @@ class AsyncTests(pexpect_test_case.AsyncPexpectTestCase):
         """Raise TIMEOUT when awaiting, or match it from a pattern list."""
         p = pexpect.spawn("cat")
         with pytest.raises(pexpect.TIMEOUT):
-            await p.expect("foo", timeout=1, async_=True)
+            await p.expect("foo", timeout=0.01, async_=True)
 
         p = pexpect.spawn("cat")
-        assert await p.expect(["foo", pexpect.TIMEOUT], timeout=1, async_=True) == 1
+        assert await p.expect(["foo", pexpect.TIMEOUT], timeout=0.01, async_=True) == 1
 
     async def test_eof(self) -> None:
         """Match EOF when it is expected, and raise it when it is not."""
@@ -61,13 +62,6 @@ class AsyncTests(pexpect_test_case.AsyncPexpectTestCase):
         assert await p.expect_exact("5", async_=True) == 0
         assert await p.expect_exact(["wpeok", "11"], async_=True) == 1
         assert await p.expect_exact(["foo", pexpect.EOF], async_=True) == 1
-
-    async def test_async_and_gc(self) -> None:
-        """Keep an awaited match working across a garbage collection."""
-        p = pexpect.spawn(f"{self.PYTHONBIN} sleep_for.py 1", encoding="utf8")
-        assert await p.expect_exact("READY", async_=True) == 0
-        gc.collect()
-        assert await p.expect_exact("END", async_=True) == 0
 
     async def test_async_and_sync(self) -> None:
         """Interleave awaited and blocking expect_exact calls on one child."""

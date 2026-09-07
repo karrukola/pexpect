@@ -20,9 +20,13 @@ OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 
 import unittest
 
+import pytest
+
 import pexpect
 
 from . import pexpect_test_case
+
+pytestmark = pytest.mark.usefixtures("fast_sleep", "killed_pty_children")
 
 
 class TestCaseWinsize(pexpect_test_case.PexpectTestCase):
@@ -33,7 +37,6 @@ class TestCaseWinsize(pexpect_test_case.PexpectTestCase):
         p = pexpect.spawn(f"{self.PYTHONBIN} sigwinch_report.py", timeout=3)
         # default size by PtyProcess class is 24 rows by 80 columns.
         p.expect_exact("Initial Size: (24, 80)")
-        p.close()
 
     def test_initial_winsize_by_dimension(self) -> None:
         """Assert user-parameter window dimension size is initial."""
@@ -43,7 +46,6 @@ class TestCaseWinsize(pexpect_test_case.PexpectTestCase):
             dimensions=(40, 100),
         )
         p.expect_exact("Initial Size: (40, 100)")
-        p.close()
 
     def test_setwinsize(self) -> None:
         """Ensure method .setwinsize() sends signal caught by child."""
@@ -53,7 +55,6 @@ class TestCaseWinsize(pexpect_test_case.PexpectTestCase):
         p.expect_exact("READY")
         p.setwinsize(19, 84)
         p.expect_exact("SIGWINCH: (19, 84)")
-        p.close()
 
     def test_getwinsize(self) -> None:
         """Read back the window dimensions of the child pty.
@@ -64,7 +65,6 @@ class TestCaseWinsize(pexpect_test_case.PexpectTestCase):
         """
         p = pexpect.spawn(f"{self.PYTHONBIN} sigwinch_report.py", timeout=3, dimensions=(40, 100))
         assert p.getwinsize() == (40, 100)
-        p.close()
 
 
 if __name__ == "__main__":

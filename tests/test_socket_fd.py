@@ -28,6 +28,8 @@ from pexpect import fdpexpect
 
 from . import test_socket
 
+pytestmark = pytest.mark.usefixtures("fast_sleep")
+
 
 class ExpectTestCase(test_socket.ExpectTestCase):
     """Run the test_socket suite through fdpexpect instead of socket_pexpect."""

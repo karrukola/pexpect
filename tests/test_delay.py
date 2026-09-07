@@ -1,8 +1,12 @@
 """Tests for the delaybeforesend and delayafterread attributes."""
 
+import pytest
+
 import pexpect
 
 from . import pexpect_test_case
+
+pytestmark = pytest.mark.usefixtures("fast_sleep", "killed_pty_children")
 
 
 class TestCaseDelay(pexpect_test_case.PexpectTestCase):

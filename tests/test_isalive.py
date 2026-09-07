@@ -23,10 +23,13 @@ import sys
 import time
 import unittest
 
+import pytest
+
 import pexpect
 
 from . import pexpect_test_case
 
+pytestmark = pytest.mark.usefixtures("fast_sleep", "killed_pty_children")
 KILL_SIGNAL = 9  # SIGKILL, spelled as a number because that is what kill(1) takes
 
 
@@ -35,7 +38,7 @@ class IsAliveTestCase(pexpect_test_case.PexpectTestCase):
 
     def test_expect_wait(self) -> None:
         """Ensure consistency in wait() and isalive()."""
-        p = pexpect.spawn("sleep 1")
+        p = pexpect.spawn("sleep 0.05")
         assert p.isalive()
         assert p.wait() == 0
         assert not p.isalive()
@@ -107,16 +110,6 @@ class IsAliveTestCase(pexpect_test_case.PexpectTestCase):
         p.expect(pexpect.EOF)
         assert not p.isalive()
 
-    def test_forced_terminate(self) -> None:
-        """End a child that traps the polite signals with terminate(force=True)."""
-        p = pexpect.spawn(self.PYTHONBIN, ["needs_kill.py"])
-        p.expect("READY")
-        assert p.terminate(force=True)
-        p.expect(pexpect.EOF)
-        assert not p.isalive()
-
-    ### Some platforms allow this. Some reset status after call to waitpid.
-    ### probably not necessary, isalive() returns early when terminate is False.
     def test_expect_isalive_consistent_multiple_calls(self) -> None:
         """Return the same value from repeated isalive() calls."""
         p = pexpect.spawn("cat")

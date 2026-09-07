@@ -58,6 +58,9 @@ _LOGIN_FAILURES = {
 # SSH tunnel kinds and the ssh option letter that requests each one.
 _TUNNEL_TYPES = {"local": "L", "remote": "R", "dynamic": "D"}
 
+# How long set_unique_prompt() waits for each of the prompt syntaxes it tries.
+_PROMPT_SET_TIMEOUT = 10
+
 # Two consecutive prompt reads are taken to be the same prompt when they differ
 # by less than this fraction of the first one's length.
 _MAX_PROMPT_DIFFERENCE_RATIO = 0.4
@@ -627,13 +630,13 @@ class pxssh(spawn):
         """
         self.sendline("unset PROMPT_COMMAND")
         self.sendline(self.PROMPT_SET_SH)  # sh-style
-        i = self.expect([TIMEOUT, self.PROMPT], timeout=10)
+        i = self.expect([TIMEOUT, self.PROMPT], timeout=_PROMPT_SET_TIMEOUT)
         if i == 0:  # csh-style
             self.sendline(self.PROMPT_SET_CSH)
-            i = self.expect([TIMEOUT, self.PROMPT], timeout=10)
+            i = self.expect([TIMEOUT, self.PROMPT], timeout=_PROMPT_SET_TIMEOUT)
             if i == 0:  # zsh-style
                 self.sendline(self.PROMPT_SET_ZSH)
-                i = self.expect([TIMEOUT, self.PROMPT], timeout=10)
+                i = self.expect([TIMEOUT, self.PROMPT], timeout=_PROMPT_SET_TIMEOUT)
                 if i == 0:
                     return False
         return True

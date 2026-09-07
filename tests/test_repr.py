@@ -1,8 +1,12 @@
 """Test __str__ methods."""
 
+import pytest
+
 import pexpect
 
 from . import pexpect_test_case
+
+pytestmark = pytest.mark.usefixtures("fast_sleep", "killed_pty_children")
 
 
 class TestCaseMisc(pexpect_test_case.PexpectTestCase):
@@ -32,7 +36,7 @@ class TestCaseMisc(pexpect_test_case.PexpectTestCase):
         child = pexpect.spawn(None, None)
         child.read_nonblocking = lambda _size, _timeout: b""
         try:
-            child.expect("alpha", timeout=0.1)
+            child.expect("alpha", timeout=0.01)
         except pexpect.TIMEOUT as e:
             str(e)  # Smoketest
         else:

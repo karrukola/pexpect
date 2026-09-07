@@ -29,6 +29,8 @@ from pexpect import fdpexpect
 
 from . import pexpect_test_case
 
+pytestmark = pytest.mark.usefixtures("fast_sleep")
+
 
 class ExpectTestCase(pexpect_test_case.PexpectTestCase):
     """Tests for fdspawn() on a plain file descriptor."""
@@ -139,7 +141,7 @@ class ExpectTestCase(pexpect_test_case.PexpectTestCase):
         s = fdpexpect.fdspawn(read_fd)
 
         with pytest.raises(pexpect.TIMEOUT):
-            s.read_nonblocking(size=1, timeout=0.1)
+            s.read_nonblocking(size=1, timeout=0.01)
         s.close()
 
 

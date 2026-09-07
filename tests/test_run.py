@@ -30,6 +30,8 @@ import pexpect
 
 from . import pexpect_test_case
 
+pytestmark = pytest.mark.usefixtures("fast_sleep", "killed_pty_children")
+
 # stop the child once the TIMEOUT callback has fired more often than this
 _MAX_TIMEOUT_EVENTS = 3
 
@@ -109,7 +111,7 @@ class RunFuncTestCase(pexpect_test_case.PexpectTestCase):
         """A TIMEOUT event callback can stop a child that never exits."""
         # TODO it seems like this test could block forever if run fails...
         events = {pexpect.TIMEOUT: timeout_callback}
-        self.runfunc("cat", timeout=1, events=events)
+        self.runfunc("cat", timeout=0.01, events=events)
 
     def test_run_bad_exitstatus(self) -> None:
         """A failing command reports a non-zero exit status."""

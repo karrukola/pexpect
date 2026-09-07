@@ -20,9 +20,13 @@ OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 
 import unittest
 
+import pytest
+
 import pexpect
 
 from . import pexpect_test_case
+
+pytestmark = pytest.mark.usefixtures("fast_sleep", "killed_pty_children")
 
 
 class TestCaseConstructor(pexpect_test_case.PexpectTestCase):

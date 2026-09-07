@@ -25,9 +25,13 @@ import unittest
 from collections.abc import Iterator
 from pathlib import Path
 
+import pytest
+
 import pexpect
 
 from . import pexpect_test_case
+
+pytestmark = pytest.mark.usefixtures("fast_sleep", "killed_pty_children")
 
 
 @contextlib.contextmanager

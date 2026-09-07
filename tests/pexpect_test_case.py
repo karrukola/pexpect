@@ -46,8 +46,6 @@ class _PexpectTestCaseBase:
         # storing our pid and asserting equality on tearDown.
         self.pid = os.getpid()
 
-        os.environ["COVERAGE_PROCESS_START"] = str(project_dir / "pyproject.toml")
-        os.environ["COVERAGE_FILE"] = str(project_dir / ".coverage")
         print("\n", self.id(), end=" ")
         sys.stdout.flush()
 

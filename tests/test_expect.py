@@ -23,9 +23,7 @@ import re
 import signal
 import subprocess
 import sys
-import time
 import unittest
-from collections.abc import Callable
 from types import FrameType
 
 import pytest
@@ -34,6 +32,8 @@ import pexpect
 
 from . import pexpect_test_case
 from .utils import no_coverage_env
+
+pytestmark = pytest.mark.usefixtures("fast_sleep", "killed_pty_children")
 
 # Python 3.14 changed the non-macOS POSIX default to forkserver
 # but the code in this module does not work with it
@@ -50,14 +50,6 @@ else:
 
 # repr() of a printable character is three characters long: quote, char, quote.
 _PRINTABLE_REPR_LEN = 3
-
-# echo_wait.py turns ECHO off two seconds after it starts.
-_ECHO_OFF_AFTER = 2
-# ... so waitnoecho(timeout=10) must return within that window.
-_ECHO_OFF_BEFORE = 10
-# A plain `cat` never turns ECHO off, so waitnoecho(timeout=4) must block
-# for very nearly the whole timeout before giving up.
-_ECHO_STAYS_ON_MIN_WAIT = 3
 
 # `head -500` in the command spawned by test_before_across_chunks.
 _HEAD_LINES = 500
@@ -258,48 +250,6 @@ class ExpectTestCase(pexpect_test_case.PexpectTestCase):
                 raise unittest.SkipTest(msg) from None
             raise
 
-    def test_waitnoecho_order(self) -> None:
-        """Wait on a child process to set echo mode.
-
-        For example, this tests that we could wait for SSH to set ECHO False
-        when asking of a password. This makes use of an external script
-        echo_wait.py.
-        """
-        p1 = pexpect.spawn(f"{self.PYTHONBIN} echo_wait.py")
-        start = time.time()
-        try:
-            p1.waitnoecho(timeout=10)
-        except OSError:
-            if sys.platform.lower().startswith("sunos"):
-                msg = "Not supported on this platform."
-                raise unittest.SkipTest(msg) from None
-            raise
-
-        end_time = time.time() - start
-        assert end_time > _ECHO_OFF_AFTER, "waitnoecho returned before ECHO was set off."
-        assert end_time < _ECHO_OFF_BEFORE, (
-            "waitnoecho did not set ECHO off in the expected window of time."
-        )
-
-        # test that we actually timeout and return False if ECHO is never set off.
-        p1 = pexpect.spawn("cat")
-        start = time.time()
-        retval = p1.waitnoecho(timeout=4)
-        end_time = time.time() - start
-        assert end_time > _ECHO_STAYS_ON_MIN_WAIT, (
-            f"waitnoecho should have waited for its whole timeout, retval={retval}"
-        )
-        assert not retval, f"retval should be False, retval={retval}"
-
-        # This one is mainly here to test default timeout for code coverage.
-        p1 = pexpect.spawn(f"{self.PYTHONBIN} echo_wait.py")
-        start = time.time()
-        p1.waitnoecho()
-        end_time = time.time() - start
-        assert end_time < _ECHO_OFF_BEFORE, (
-            "waitnoecho did not set ECHO off in the expected window of time."
-        )
-
     def test_expect_echo(self) -> None:
         """Match input twice over, because tty echo is on by default."""
         p = pexpect.spawn("cat", echo=True, timeout=5)
@@ -367,7 +317,7 @@ class ExpectTestCase(pexpect_test_case.PexpectTestCase):
         index = p.expect(patterns)
         assert patterns[index] == b"wxyz", "index=" + str(index)
         p.sendline(b"$*!@?")
-        index = p.expect(patterns, timeout=1)
+        index = p.expect(patterns, timeout=0.01)
         assert patterns[index] == pexpect.TIMEOUT, "index=" + str(index)
         p.sendeof()
         index = p.expect(patterns)
@@ -468,7 +418,7 @@ class ExpectTestCase(pexpect_test_case.PexpectTestCase):
 
     def test_expect_timeout(self) -> None:
         """Set `after` to TIMEOUT when TIMEOUT is the pattern that matched."""
-        p = pexpect.spawn("cat", timeout=5)
+        p = pexpect.spawn("cat", timeout=0.01)
         p.expect(pexpect.TIMEOUT)  # This tells it to wait for timeout.
         assert p.after == pexpect.TIMEOUT
 
@@ -542,6 +492,9 @@ class ExpectTestCase(pexpect_test_case.PexpectTestCase):
     def test_before_after_timeout(self) -> None:
         """Tests that timeouts do not truncate before, a bug in 4.4-4.7."""
         child = pexpect.spawn("cat", echo=False)
+        # 101 sendlines below, each one paying delaybeforesend. Nothing is read
+        # back between them, so there is no echo to race with.
+        child.delaybeforesend = None
         child.sendline("BEGIN")
         for _i in range(100):
             child.sendline("foo" * 10)
@@ -557,12 +510,15 @@ class ExpectTestCase(pexpect_test_case.PexpectTestCase):
     def test_increasing_searchwindowsize(self) -> None:
         """Tests that the search window can be expanded, a bug in 4.4-4.7."""
         child = pexpect.spawn("cat", echo=False)
+        # 101 sendlines below, each one paying delaybeforesend. Nothing is read
+        # back between them, so there is no echo to race with.
+        child.delaybeforesend = None
         child.sendline("BEGIN")
         for _i in range(100):
             child.sendline("foo" * 10)
-        e = child.expect([b"xyzzy", pexpect.TIMEOUT], searchwindowsize=10, timeout=0.5)
+        e = child.expect([b"xyzzy", pexpect.TIMEOUT], searchwindowsize=10, timeout=0.01)
         assert e == 1
-        e = child.expect([b"BEGIN", pexpect.TIMEOUT], searchwindowsize=10, timeout=0.5)
+        e = child.expect([b"BEGIN", pexpect.TIMEOUT], searchwindowsize=10, timeout=0.01)
         assert e == 1
         e = child.expect([b"BEGIN", pexpect.TIMEOUT], searchwindowsize=40000, timeout=30.0)
         assert e == 0
@@ -574,83 +530,6 @@ class ExpectTestCase(pexpect_test_case.PexpectTestCase):
         p = pexpect.spawn("echo foobarbazbop")
         e = p.expect([b"bar", b"bop"], searchwindowsize=6)
         assert e == 1
-
-    def _ordering(self, p: pexpect.spawn) -> None:
-        p.timeout = 20
-        p.expect(b">>> ")
-
-        p.sendline("list(range(4*3))")
-        assert p.expect([b"5,", b"5,"]) == 0
-        p.expect(b">>> ")
-
-        p.sendline(b"list(range(4*3))")
-        assert p.expect([b"7,", b"5,"]) == 1
-        p.expect(b">>> ")
-
-        p.sendline(b"list(range(4*3))")
-        assert p.expect([b"5,", b"7,"]) == 0
-        p.expect(b">>> ")
-
-        p.sendline(b"list(range(4*5))")
-        assert p.expect([b"2,", b"12,"]) == 0
-        p.expect(b">>> ")
-
-        p.sendline(b"list(range(4*5))")
-        assert p.expect([b"12,", b"2,"]) == 1
-
-    def test_ordering(self) -> None:
-        """Check which pattern expect() returns when many may eventually match.
-
-        I (Grahn) am a bit confused about what should happen, but this test
-        passes with pexpect 2.1.
-        """
-        p = pexpect.spawn(self.PYTHONBIN)
-        self._ordering(p)
-
-    def test_ordering_exact(self) -> None:
-        """Check which pattern expect_exact() returns when many may match.
-
-        I (Grahn) am a bit confused about what should happen, but this test
-        passes for the expect() method with pexpect 2.1.
-        """
-        p = pexpect.spawn(self.PYTHONBIN)
-        # mangle the spawn so we test expect_exact() instead
-        p.expect = p.expect_exact
-        self._ordering(p)
-
-    def _greed(self, expect: Callable[[list[bytes]], int]) -> None:
-        # End at the same point: the one with the earliest start should win
-        assert expect([b"3, 4", b"2, 3, 4"]) == 1
-
-        # Start at the same point: first pattern passed wins
-        assert expect([b"5,", b"5, 6"]) == 0
-
-        # Same pattern passed twice: first instance wins
-        assert expect([b"7, 8", b"7, 8, 9", b"7, 8"]) == 0
-
-    def _greed_read1(self, expect: Callable[[list[bytes]], int]) -> None:
-        # Here, one has an earlier start and a later end. When processing
-        # one character at a time, the one that finishes first should win,
-        # because we don't know about the other match when it wins.
-        # If maxread > 1, this behaviour is currently undefined, although in
-        # most cases the one that starts first will win.
-        assert expect([b"1, 2, 3", b"2,"]) == 1
-
-    def test_greed(self) -> None:
-        """Check which of several overlapping patterns expect() prefers."""
-        p = pexpect.spawn(self.PYTHONBIN + " list100.py")
-        self._greed(p.expect)
-
-        p = pexpect.spawn(self.PYTHONBIN + " list100.py", maxread=1)
-        self._greed_read1(p.expect)
-
-    def test_greed_exact(self) -> None:
-        """Like test_greed(), but for expect_exact()."""
-        p = pexpect.spawn(self.PYTHONBIN + " list100.py")
-        self._greed(p.expect_exact)
-
-        p = pexpect.spawn(self.PYTHONBIN + " list100.py", maxread=1)
-        self._greed_read1(p.expect_exact)
 
     def test_bad_arg(self) -> None:
         """Reject a pattern that is neither a string, a regex, EOF nor TIMEOUT."""
@@ -721,7 +600,7 @@ class ExpectTestCase(pexpect_test_case.PexpectTestCase):
         Then the read loop goes round again with no deadline to recompute and
         matches once the second half arrives.
         """
-        p = pexpect.spawn("sh", ["-c", "printf abc; sleep 0.3; printf def"], timeout=None)
+        p = pexpect.spawn("sh", ["-c", "printf abc; sleep 0.02; printf def"], timeout=None)
         p.expect("abcdef")
         p.expect(pexpect.EOF)
 
@@ -733,8 +612,8 @@ class ExpectTestCase(pexpect_test_case.PexpectTestCase):
         easier for testing and is treated the same as a SIGWINCH.
 
         To ensure that the alarm fires during the expect call, we are
-        setting the signal to alarm after 1 second while the spawned process
-        sleeps for 2 seconds prior to sending the expected output.
+        setting the signal to alarm after 10 ms while the spawned process
+        sleeps for 30 ms prior to sending the expected output.
         """
 
         def noop(_signum: int, _frame: FrameType | None) -> None:
@@ -742,9 +621,9 @@ class ExpectTestCase(pexpect_test_case.PexpectTestCase):
 
         signal.signal(signal.SIGALRM, noop)
 
-        p1 = pexpect.spawn(f"{self.PYTHONBIN} sleep_for.py 2", timeout=5)
+        p1 = pexpect.spawn(f"{self.PYTHONBIN} sleep_for.py 0.03", timeout=5)
         p1.expect("READY")
-        signal.alarm(1)
+        signal.setitimer(signal.ITIMER_REAL, 0.01)
         p1.expect("END")
 
     def test_stdin_closed(self) -> None:

@@ -21,9 +21,16 @@ OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 import sys
 import unittest
 
+import pytest
+
 import pexpect
 
 from . import pexpect_test_case
+
+pytestmark = pytest.mark.usefixtures("fast_sleep", "killed_pty_children")
+# The tests below only look at the TIMEOUT they provoke, never at how long the
+# wait was, so they ask for the shortest one that still reaches the timeout path.
+_TIMEOUT = 0.01
 
 
 class ExpTimeoutTestCase(pexpect_test_case.PexpectTestCase):
@@ -48,7 +55,7 @@ class ExpTimeoutTestCase(pexpect_test_case.PexpectTestCase):
             p = pexpect.spawn("cat")
             p.sendline("Hello")
             p.expect("Hello")
-            p.expect("Goodbye", timeout=5)
+            p.expect("Goodbye", timeout=_TIMEOUT)
         except pexpect.TIMEOUT:
             assert p.match_index is None
         else:
@@ -70,7 +77,7 @@ class ExpTimeoutTestCase(pexpect_test_case.PexpectTestCase):
         try:
             p = pexpect.spawn("cat")
             p.sendline("Hello")
-            p.expect("Goodbye", timeout=5)
+            p.expect("Goodbye", timeout=_TIMEOUT)
         except pexpect.TIMEOUT:
             err = sys.exc_info()[1]
             if err.get_trace().count("pexpect/__init__.py") != 0:
@@ -83,7 +90,7 @@ class ExpTimeoutTestCase(pexpect_test_case.PexpectTestCase):
         """Keep the intermediate caller in a TIMEOUT stack trace."""
 
         def nested_function(spawn_instance: pexpect.spawn) -> None:
-            spawn_instance.expect("junk", timeout=3)
+            spawn_instance.expect("junk", timeout=_TIMEOUT)
 
         try:
             p = pexpect.spawn("cat")

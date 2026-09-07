@@ -33,6 +33,8 @@ from pexpect.popen_spawn import PopenSpawn
 
 from . import pexpect_test_case
 
+pytestmark = pytest.mark.usefixtures("fast_sleep")
+
 
 class ExpectTestCase(pexpect_test_case.PexpectTestCase):
     """Tests for expect and expect_exact on a PopenSpawn child."""
@@ -115,7 +117,7 @@ class ExpectTestCase(pexpect_test_case.PexpectTestCase):
 
     def test_expect_timeout(self) -> None:
         """Wait for TIMEOUT and find it reported back in ``after``."""
-        p = PopenSpawn("cat", timeout=5)
+        p = PopenSpawn("cat", timeout=0.01)
         p.expect(pexpect.TIMEOUT)  # This tells it to wait for timeout.
         assert p.after == pexpect.TIMEOUT
 

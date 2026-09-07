@@ -7,10 +7,13 @@ import time
 import unittest
 from pathlib import Path
 
+import pytest
+
 import pexpect
 
 from . import pexpect_test_case
 
+pytestmark = pytest.mark.usefixtures("fast_sleep", "killed_pty_children")
 # the program cat(1) may display ^D\x08\x08 when \x04 (EOF, Ctrl-D) is sent
 _CAT_EOF = "^D\x08\x08"
 

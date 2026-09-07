@@ -57,6 +57,8 @@ dev = [
     "pytest>=9.1.1",
     "pytest-cov>=7.1.0",
     "pytest-html>=4.2.0",
+    "pytest-time>=0.5.0",
+    "pytest-timeout>=2.4.0",
     "ruff>=0.16.6",
 ]
 
@@ -192,4 +194,12 @@ lint.per-file-ignores."src/pexpect/socket_pexpect.py" = [
 lint.per-file-ignores."src/pexpect/spawnbase.py" = [
     "FBT001", "FBT002",  # public positional/keyword bool flags
     "PLR0913", "PLR0917",  # `SpawnBase.__init__` signature is public API
+]
+
+[tool.pytest]
+# Starting a child process costs about 50 ms, and every test outside
+# tests/integration drives one. 150 ms leaves headroom over the slowest of them
+# while still catching a hang or a real sleep that escaped tests/conftest.py.
+addopts = [
+    "--timeout=0.15"  # [seconds], enforced by pytest-timeout plugin
 ]

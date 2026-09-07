@@ -3,6 +3,6 @@
 import signal
 import time
 
-signal.alarm(1)  # Schedule SIGALRM in 1s
+signal.setitimer(signal.ITIMER_REAL, 0.01)  # Schedule SIGALRM in 10ms
 
 time.sleep(6)

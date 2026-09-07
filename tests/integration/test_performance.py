@@ -23,10 +23,12 @@ import sys
 import time
 import unittest
 
+import pytest
+
 import pexpect
+from tests import pexpect_test_case
 
-from . import pexpect_test_case
-
+pytestmark = pytest.mark.usefixtures("fast_sleep", "lean_child_env")
 # This isn't exactly a unit test, but it fits in nicely with the rest of the tests.
 
 

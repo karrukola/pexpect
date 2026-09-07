@@ -24,7 +24,6 @@ import os
 import signal
 import socket
 import sys
-import time
 import unittest
 from typing import TYPE_CHECKING
 
@@ -34,6 +33,8 @@ import pexpect
 from pexpect import socket_pexpect
 
 from . import pexpect_test_case
+
+pytestmark = pytest.mark.usefixtures("fast_sleep")
 
 if TYPE_CHECKING:
     from multiprocessing.synchronize import Event
@@ -49,6 +50,16 @@ else:
 
 class SocketServerError(Exception):
     """The test socket server did not come up in time."""
+
+
+# Timeout handed to the sessions of the tests that wait for a TIMEOUT to be
+# raised. Every test in this suite runs under a time budget, so the wait for a read
+# that never completes has to stay well below it.
+_READ_TIMEOUT = 0.02
+
+# Upper bound on how long a subprocess may take to reach the state the test
+# waits for. Only reached when something is broken, so it can stay generous.
+_STARTUP_TIMEOUT = 10.0
 
 
 class ExpectTestCase(pexpect_test_case.PexpectTestCase):
@@ -109,13 +120,9 @@ class ExpectTestCase(pexpect_test_case.PexpectTestCase):
         self.server_process = mp_context.Process(target=self.socket_server, args=(self.server_up,))
         self.server_process.daemon = True
         self.server_process.start()
-        counter = 0
-        while not self.server_up.is_set():
-            time.sleep(0.250)
-            counter += 1
-            if counter > (10 / 0.250):
-                msg = "Could not start socket server"
-                raise SocketServerError(msg)
+        if not self.server_up.wait(timeout=_STARTUP_TIMEOUT):
+            msg = "Could not start socket server"
+            raise SocketServerError(msg)
 
     def tearDown(self) -> None:
         """Interrupt the socket server subprocess and reap it."""
@@ -173,7 +180,7 @@ class ExpectTestCase(pexpect_test_case.PexpectTestCase):
         try:
             sock = socket.socket(self.af, socket.SOCK_STREAM)
             sock.connect((self.host, self.port))
-            session = self.spawn(sock, timeout=10)
+            session = self.spawn(sock, timeout=_READ_TIMEOUT)
             # Get all data from server
             session.read_nonblocking(size=4096)
             all_read.set()
@@ -218,7 +225,7 @@ class ExpectTestCase(pexpect_test_case.PexpectTestCase):
         """Expecting a pattern the server never sends raises TIMEOUT."""
         sock = socket.socket(self.af, socket.SOCK_STREAM)
         sock.connect((self.host, self.port))
-        session = self.spawn(sock, timeout=10)
+        session = self.spawn(sock, timeout=_READ_TIMEOUT)
         with pytest.raises(pexpect.TIMEOUT):
             session.expect(b"Bogus response")
 
@@ -229,11 +236,9 @@ class ExpectTestCase(pexpect_test_case.PexpectTestCase):
         test_proc = mp_context.Process(target=self.socket_fn, args=(timed_out, all_read))
         test_proc.daemon = True
         test_proc.start()
-        while not all_read.is_set():
-            time.sleep(1.0)
+        all_read.wait(timeout=_STARTUP_TIMEOUT)
         os.kill(test_proc.pid, signal.SIGWINCH)
-        while not timed_out.is_set():
-            time.sleep(1.0)
+        timed_out.wait(timeout=_STARTUP_TIMEOUT)
         test_proc.join(timeout=5.0)
         assert test_proc.exitcode == errno.ETIMEDOUT
 
@@ -244,11 +249,12 @@ class ExpectTestCase(pexpect_test_case.PexpectTestCase):
         test_proc = mp_context.Process(target=self.socket_fn, args=(timed_out, all_read))
         test_proc.daemon = True
         test_proc.start()
-        while not all_read.is_set():
-            time.sleep(1.0)
+        all_read.wait(timeout=_STARTUP_TIMEOUT)
         while not timed_out.is_set():
             os.kill(test_proc.pid, signal.SIGWINCH)
-            time.sleep(1.0)
+            # Event.wait paces the signals with real time and returns as soon as
+            # the child reports the timeout it was interrupted out of.
+            timed_out.wait(timeout=0.001)
         test_proc.join(timeout=5.0)
         assert test_proc.exitcode == errno.ETIMEDOUT
 
