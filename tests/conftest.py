@@ -67,10 +67,19 @@ _YIELD_SECONDS = 0.01
 # The per-test budget is this many child processes' worth of time. The most any
 # one test outside tests/integration drives is four -- test_misc's
 # test_read_after_close_raises_value_error spawns and closes `cat` once per read
-# method, for read_nonblocking, read, readline and readlines -- so six is that
-# worst case plus half again, and a test that leaks a real sleep or hangs still
-# fails rather than passing slowly.
-_CHILDREN_PER_TEST = 6
+# method, for read_nonblocking, read, readline and readlines.
+#
+# Twelve is that worst case with room for a stall, and the room is the point.
+# Measured over six runs on an aarch64 SBC, against a budget of six: that test
+# came out at 67% to 74% of it every time and no other test passed 25%. A
+# margin of a third over the worst legitimate test reads as ample and is not,
+# because the budget is a wall clock and the machine is shared -- one run in
+# twenty lost test_spawn_refuses_to_start_a_second_child, which normally takes
+# 0.35 s, to a stall that pushed it past 1.79 s. Widening costs nothing that
+# matters: a test that hangs waits either forever or on pexpect's own 30 s
+# default, so it is caught at any budget in this range, and only the hanging
+# test pays the extra wait.
+_CHILDREN_PER_TEST = 12
 
 # Never tighter than this, however fast the machine measures. 150 ms is the
 # figure the suite was written to, and on the hardware it was written on the
