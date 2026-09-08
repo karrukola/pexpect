@@ -76,5 +76,10 @@ def collate_coverage(session: nox.Session) -> None:
     """Combine test coverage results from all test executions."""
     _install_deps(session)
     session.run("coverage", "combine")
+    # report.fail_under makes both of these exit 2 once the total has slipped, and
+    # each writes its report before it checks. Tolerating that one exit code on the
+    # HTML run -- 2 is the floor, 1 is a real error -- leaves the failing to the XML
+    # run below, so a run that breaks the floor still publishes the report that
+    # shows where it broke. CI uploads both.
+    session.run("coverage", "html", success_codes=(0, 2))
     session.run("coverage", "xml")
-    session.run("coverage", "html")
