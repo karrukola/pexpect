@@ -4,6 +4,58 @@ History
 Releases
 --------
 
+Unreleased
+``````````
+
+Fixes from a code review pass over the whole library. Each is recorded in
+``docs/issues.md`` by the number given here, with the reproduction it was
+filed against.
+
+Behaviour changes worth reading before upgrading:
+
+* ``pxssh.login()`` now quotes the server, username, ``ssh_key`` path and
+  ``ssh_config`` path it interpolates into the ssh command line (41). An
+  unquoted value with a space in it silently became two arguments, and with
+  ``spawn_local_ssh=False`` the whole command string is parsed by a *remote*
+  shell, so a hostname containing ``;`` ran a second command there. Callers who
+  relied on passing extra ssh arguments through the ``server`` value must now
+  pass them through ``cmd``, which is not quoted.
+* ``PopenSpawn.read_nonblocking()`` waits for data and raises ``TIMEOUT`` when
+  none arrives, where it used to return an empty string immediately (39). That
+  return value made ``expect()`` busy-poll, burning about 0.15 s of CPU per
+  second of waiting.
+* ``replwrap`` no longer replaces the child's environment with a single
+  variable (35). A REPL started from a command string, ``replwrap.python()``
+  included, inherits ``os.environ`` again, plus ``NO_COLOR=1`` and
+  ``TERM=dumb``.
+* ``run()`` and ``runu()`` are annotated ``command: str`` (44). A ``list``
+  never worked — it was concatenated into one word — but it type-checked.
+* ``pexpect.spawn("")`` raises ``ExceptionPexpect`` rather than ``IndexError``,
+  and a command with leading whitespace resolves correctly (43).
+
+Corrections with no caller-visible surface:
+
+* ``expect()`` no longer discards the buffer when a pattern matches the empty
+  string at the end of it (33). ``expect(r"\s*$")`` returned an empty
+  ``before`` and lost what had been read.
+* ``interact()`` no longer raises ``TypeError`` on a spawn that has both an
+  ``encoding`` and a logfile (34).
+* ``SocketSpawn`` writes what it reads to ``logfile`` and ``logfile_read``
+  (36), and raises ``TIMEOUT`` rather than ``BlockingIOError`` for a zero
+  timeout (37).
+* ``PopenSpawn`` has ``close()`` and ``isalive()``, so it works as a context
+  manager like every other spawn class (38).
+* ``pexpect.ANSI`` logs unhandled escape sequences through the ``logging``
+  module instead of appending to a file named ``log`` in the current working
+  directory (42).
+* ``ExceptionPexpect.get_trace()`` filters frames by package directory, so
+  frames from ``spawnbase.py`` no longer leak into the trace it promises to
+  strip (45).
+* ``screen.erase_up()`` and ``screen.erase_down()`` no longer erase the whole
+  cursor row when the cursor is on the first or last row (46).
+* ``with spawn(...) as child:`` keeps the concrete class for type checkers, so
+  ``child.sendline(...)`` type-checks (50).
+
 Version 4.9
 ```````````
 * Add support for Python 3.12 (:ghpull:`769`).
