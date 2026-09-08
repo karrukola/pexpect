@@ -1547,6 +1547,119 @@ the wrong test.
 
 ---
 
+## Found during the CI pass (2026-09-08)
+
+`.github/workflows/ci.yml` was rewritten to run nox sessions on a plain
+`ubuntu-latest` runner, so that the version matrix belongs to nox and the
+workflow never names a version: `.python-versions` parameterises the sessions,
+uv fetches whatever interpreter the runner is missing, and setup-uv's
+`cache-python` keeps those fetches off the critical path. Five defects came out
+of reading the old workflow closely enough to replace it, none of them in the
+library. The first is why the rest went unnoticed: that workflow has not been
+able to finish a run since the move to `pyproject.toml`, four days before this
+pass.
+
+The Coveralls upload and the `finish` job that closed its parallel build are
+gone with it. Coverage is combined by the `collate_coverage` session, as it
+already was for a local run, and published as a workflow artifact; the gate is
+`report.fail_under = 100` in `pyproject.toml`, which fails the session that
+produced the regression rather than a badge somewhere else.
+
+The two diagnostic scripts the old test step ran ahead of pytest --
+`tools/display-sighandlers.py` and `tools/display-terminalinfo.py` -- are not in
+the new workflow either, and dropping them costs nothing that CI ever had. Both
+report on their own stdin, which in a workflow step is a pipe: what the second
+printed under CI was `stdin is not a typewriter` and a table of pipe limits,
+never the termios state a pty library would want, and the signal table the first
+prints is identical across the whole matrix but for one name `dir(signal)` gained
+in 3.14. They stay in `tools/`, where a developer with a terminal can get the
+answer they were written to give.
+
+### 53. The workflow installed from two files that had been deleted
+
+**`.github/workflows/ci.yml:39`** -- **fixed**
+
+`pip install -r requirements-testing.txt`, and two steps later
+`pytest --cov pexpect --cov-config .coveragerc`. `requirements-testing.txt` was
+removed by `3de7753` and `.coveragerc` by `66c0d5b`, both on 2026-09-04, when
+the project moved its dependencies and its coverage settings into
+`pyproject.toml`. Every run since has failed at the install step, which is also
+why **54** and **55** went unnoticed: no run reached the step that either one
+would have affected.
+
+### 54. The matrix tested versions the project had dropped, and neither of the two it had gained
+
+**`.github/workflows/ci.yml:19`** -- **fixed**
+
+`python-version: ["3.7", "3.8", "3.9", "3.10", "3.11", "3.12", "pypy3.9"]`,
+plus a `3.6` entry pinned to `ubuntu-20.04`, against a `requires-python` of
+`>=3.10` and a noxfile matrix of 3.10 through 3.14. Five of the eight
+combinations named versions the package now refuses to install on -- 3.6
+through 3.9, and a PyPy implementing 3.9 -- while 3.13 and 3.14 went untested;
+and `ubuntu-20.04` has been retired as a runner image, so the `include` holding
+3.6 could not be scheduled at all.
+
+This is the defect the rewrite is really about: a matrix written out in the
+workflow is a second copy of a list that already exists, and the copy is the one
+nothing checks. There is now no copy -- `.python-versions` is read by the
+noxfile, hashed into CI's cache key, and named by nothing else.
+
+### 55. `PYTHONIOENCODING=UTF8` was exported in a step of its own
+
+**`.github/workflows/ci.yml:38`** -- **fixed**
+
+Each `run:` block is a separate shell, and this `export` sat in the *Install
+packages* step, two steps before the one that ran pytest. The single
+environment variable CI set for the suite's benefit reached `pip` and nothing
+else -- a pty library's tests, of all things, running under whatever encoding
+the runner happened to default to.
+
+It is gone rather than moved. The suite has been passing for years without that
+export ever taking effect, on runners that provide a UTF-8 locale of their own,
+so the honest fix is to stop claiming to set something: a variable the tests
+actually need belongs in the workflow's `env:` block, where every step inherits
+it, and none of them turns out to.
+
+### 56. `_ON_CI` was computed and never read
+
+**`noxfile.py:11`** -- **fixed**
+
+Next to a link to nox's `error_on_missing_interpreters` option, which nox
+already defaults to `"CI" in os.environ` -- so by the time the link had been
+followed there was nothing left for the variable to do, and it stayed anyway.
+
+Deleted, along with the `os` import it needed. What it was reaching for is real
+and worth knowing: on CI a missing interpreter is an error rather than a skip,
+which is why the workflow says `NOX_DOWNLOAD_PYTHON: auto` and why the link now
+sits beside that line. The noxfile is left with no opinion about CI at all,
+which is the correct number of opinions for it to have.
+
+### 57. Five `lint` sessions wrote one mypy report
+
+**`noxfile.py:46`** -- **fixed**
+
+`--junit-xml reports/mypy.xml` in a session parameterised over five
+interpreters: each run overwrote the last, so the file described whichever
+finished most recently. It went unnoticed while nothing read the file. CI now
+publishes it, and the name carries the interpreter --
+`reports/mypy-{session.python}.xml`.
+
+### Dead CI configuration left in place
+
+Not defects, and not numbered. Each of these points at a service that stopped
+building this project years ago, and none of them can be repaired by less work
+than deleting it. Left for a decision rather than taken: removing a service's
+configuration is also how a project loses the record of what used to run it.
+
+| Location | What |
+|---|---|
+| `.travis.yml` | Python 2.7 through 3.7 and `pypy`, `pip install coveralls`, `--cov-config .coveragerc`. Travis has not run this project since GitHub Actions replaced it in `fe44359` (2022-12-27). |
+| `tools/teamcity-runtests.sh`, `tools/teamcity-coverage-report.sh` | `mkvirtualenv`, `python setup.py install` and `--cov-config .coveragerc`: a virtualenvwrapper, a build backend and a config file the project no longer has. |
+| `coveralls` (`[dependency-groups] dev`) | Installed for a service the only remaining caller of which is `.travis.yml`. Nothing in the noxfile or the workflows invokes it. |
+| `README.rst:1`, `doc/index.rst:4` | A build badge pointing at `travis-ci.org`, which stopped serving anything in 2021. It is the first thing on the project's PyPI page and the first thing in its documentation, and it has been a broken image in both for years. Replacing it means choosing an owner for the Actions URL, which is why it is here rather than done. |
+
+---
+
 ## Dead code left in place
 
 Not bugs, but unreachable on `requires-python >= 3.10`. Left alone because
