@@ -7,7 +7,8 @@ Releases
 Unreleased
 ``````````
 
-Fixes from a code review pass over the whole library. Each is recorded in
+Fixes from a code review pass over the whole library, and from a later pass
+that made the test suite fail on any warning it raises. Each is recorded in
 ``docs/issues.md`` by the number given here, with the reproduction it was
 filed against.
 
@@ -32,6 +33,12 @@ Behaviour changes worth reading before upgrading:
   never worked — it was concatenated into one word — but it type-checked.
 * ``pexpect.spawn("")`` raises ``ExceptionPexpect`` rather than ``IndexError``,
   and a command with leading whitespace resolves correctly (43).
+* ``PopenSpawn.close()`` closes the child's output pipe and waits for the
+  reader thread that was draining it (51). Both used to be left to the garbage
+  collector, so a program that created and closed many ``PopenSpawn`` objects
+  leaked one descriptor and one thread apiece; on Python 3.12 and later the
+  surviving threads also make every later ``fork()`` in the process warn. Code
+  that read ``spawn.proc.stdout`` after ``close()`` now finds it closed.
 
 Corrections with no caller-visible surface:
 
@@ -55,6 +62,11 @@ Corrections with no caller-visible surface:
   cursor row when the cursor is on the first or last row (46).
 * ``with spawn(...) as child:`` keeps the concrete class for type checkers, so
   ``child.sendline(...)`` type-checks (50).
+* ``close()`` releases the asyncio read transport that an awaited ``expect()``
+  binds to the spawn and keeps for the next await (52). Nothing released it
+  before, so a spawn that was awaited and then closed left asyncio to finalize
+  the transport, which reports it as an unclosed transport at whatever point
+  the collector reached it.
 
 Version 4.9
 ```````````
