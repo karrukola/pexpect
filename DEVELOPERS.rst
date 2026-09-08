@@ -4,12 +4,39 @@ Running the tests
 The whole suite runs under `nox <https://nox.thea.codes/>`_, once per supported
 interpreter::
 
-    nox -s test          # every version in noxfile.py
+    nox -s test          # every version in .python-versions
     nox -s test-3.14     # one of them
 
 Each ``test`` session measures coverage, and the ``collate_coverage`` session it
 notifies combines the per-version data and writes the XML and HTML reports.
 ``pytest tests`` still works for a single unmeasured run.
+
+``nox --list`` prints the rest. The other one worth knowing about is ``lint``,
+which runs ruff and then mypy against every interpreter.
+
+``tools/`` holds four scripts that describe the machine rather than test it --
+its signal dispositions, its termios modes, its ``pathconf`` limits. They are
+worth running on a box where pexpect misbehaves and nowhere else: each reports
+on *its own stdin*, so under anything that pipes output they say ``stdin is not
+a typewriter`` and little more, which is why CI does not run them.
+
+The interpreters
+----------------
+
+``.python-versions`` lists them, and the noxfile reads that file to build its
+matrix. uv understands the same filename, so one command installs everything the
+matrix needs on a machine that has none of it::
+
+    uv python install
+
+Nothing else names a version -- not the workflow, not CI's cache key, which is
+computed from this file rather than written out -- so putting 3.15 in the matrix
+is an edit to that one file.
+
+Leave ``.python-version`` (singular: the interpreter for the project's own
+environment) alone while you are in there. With the singular file missing, uv
+falls back to the *first* line of ``.python-versions``, which would quietly move
+development onto the oldest version still supported.
 
 System packages the suite drives
 --------------------------------
@@ -34,7 +61,56 @@ bring them in; on Debian or Ubuntu::
     stub and set ``path-exclude=/usr/share/man/*`` in
     ``/etc/dpkg/dpkg.cfg.d/excludes``, so installing ``man-db`` alone is not
     enough -- ``unminimize``, or drop that exclusion and reinstall
-    ``coreutils`` for ``sleep.1``.
+    ``coreutils`` for ``sleep.1``. GitHub's Ubuntu runners need none of that,
+    which the ``man --where sleep`` line in the CI workflow is there to keep
+    true.
+
+How CI runs it
+==============
+
+``.github/workflows/ci.yml`` has two jobs, ``Lint`` and ``Test``, and between them
+they run two commands: ``nox -s lint`` and ``nox -s test``. There is no matrix in
+the workflow. GitHub Actions is told which sessions to run, nox decides which
+interpreters that covers, and the version list stays in one place.
+
+Both jobs run on a plain ``ubuntu-latest`` runner. `astral-sh/setup-uv
+<https://github.com/astral-sh/setup-uv>`_ puts uv there, and uv installs whichever
+interpreters the runner is missing when a session first asks for one -- five of
+them, on a cold cache. The workflow sets ``NOX_DOWNLOAD_PYTHON: auto``, which is
+nox's default said out loud, because the whole arrangement depends on it: nox
+turns a missing interpreter into an error whenever ``CI`` is set, so without the
+download a version added to the matrix would fail the run rather than be quietly
+skipped.
+
+That download is what the cache is for. ``cache-python: true`` tells setup-uv to
+carry uv's managed interpreters in the Actions cache alongside its wheel cache,
+and ``cache-dependency-glob`` names ``uv.lock`` and ``.python-versions``, so both
+caches turn over exactly when their contents should: a dependency change, or a
+change to the matrix. Nothing needs pruning by hand, and a cold cache costs a
+download rather than a failure.
+
+CI installs ``zsh`` and ``man-db`` (see above -- without zsh two tests skip and
+coverage lands under the floor). The runner has had a working ``man`` since CI
+moved there, so ``man-db`` is belt and braces; the ``man --where sleep`` check
+closing that step is what makes a runner image that stops shipping man pages say
+so in one line, rather than through a puzzling ``test_pager_as_cat`` failure.
+
+CI is Linux only, as it was before -- the workflow this replaced named no other
+runner -- while the package's classifiers claim macOS as well. Closing that gap
+needs a second job on a ``macos`` runner running the same two commands; nothing
+in the sessions or the matrix would have to change, which is the point of keeping
+the versions in ``.python-versions`` and the workflow free of them.
+
+What CI publishes
+-----------------
+
+Each job uploads what it produced: ``mypy-reports`` (one JUnit XML per
+interpreter) and ``coverage-reports`` (the combined XML and the HTML tree).
+Neither is a gate. The gates are inside the sessions -- ruff and mypy exit
+non-zero, and ``report.fail_under = 100`` in ``pyproject.toml`` fails
+``collate_coverage`` when the combined total slips -- so a red run says what
+went wrong before anyone downloads an artifact. Both reports are still written
+in that case, which is the point of publishing them.
 
 Adding a test
 =============
