@@ -18,13 +18,13 @@ nox.options.default_venv_backend = "uv"
 _REPO_ROOT = Path(__file__).parent
 _SRC_ROOT = _REPO_ROOT / "src"
 _TESTS_ROOT = _REPO_ROOT / "tests"
-_PYTHON_VERSIONS = [
-    "3.10",
-    "3.11",
-    "3.12",
-    "3.13",
-    "3.14",
-]
+
+# The interpreter matrix, and the only copy of it: the workflow names sessions, never
+# versions, so adding one is an edit to this file alone. uv reads the filename
+# natively -- `uv python install` with no arguments installs exactly these -- so one
+# command sets a fresh checkout up to run the whole matrix, and the uv backend below
+# fetches whatever is still missing when a session asks for it.
+_PYTHON_VERSIONS = (_REPO_ROOT / ".python-versions").read_text(encoding="utf-8").split()
 
 
 def _install_deps(session: nox.Session) -> None:
