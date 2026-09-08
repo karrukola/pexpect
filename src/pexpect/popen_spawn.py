@@ -12,7 +12,7 @@ import time
 from queue import Empty, Queue
 from typing import IO, TYPE_CHECKING, AnyStr, TypedDict, cast, overload
 
-from .exceptions import EOF
+from .exceptions import EOF, TIMEOUT
 from .spawnbase import SpawnBase
 
 if TYPE_CHECKING:
@@ -178,24 +178,48 @@ class PopenSpawn(SpawnBase[AnyStr]):
         if timeout is None:
             timeout = 1e6
 
-        t0 = time.time()
-        while (time.time() - t0) < timeout and size and len(buf) < size:
-            try:
-                incoming = self._read_queue.get_nowait()
-            # PERF203: the except Empty IS the loop exit
-            except Empty:  # an empty queue is how this loop terminates  # noqa: PERF203
-                break
-            else:
-                if incoming is None:
-                    self._read_reached_eof = True
-                    break
-
-                buf += self._decoder.decode(incoming, final=False)
+        buf = self._fill_buffer(buf, size, timeout)
 
         r, self._buf = buf[:size], buf[size:]
 
         self._log(r, "read")
         return r
+
+    def _fill_buffer(self, buf: AnyStr, size: int, timeout: float) -> AnyStr:
+        """Grow *buf* with output the reader thread has queued, up to *size*.
+
+        Waits for the first character rather than for all of *size* of them:
+        once anything has arrived, whatever else is already queued is drained
+        without waiting again, so a fast match costs about a millisecond
+        rather than the full *timeout*. Raises :exc:`TIMEOUT` if the deadline
+        passes with nothing read. If *size* is 0 the loop never runs, so this
+        returns *buf* unchanged without waiting at all.
+        """
+        t0 = time.time()
+        while size and len(buf) < size:
+            if buf:
+                try:
+                    incoming = self._read_queue.get_nowait()
+                except Empty:
+                    break
+            else:
+                remaining = timeout - (time.time() - t0)
+                if remaining <= 0:
+                    msg = "Timeout exceeded."
+                    raise TIMEOUT(msg)
+                try:
+                    incoming = self._read_queue.get(timeout=remaining)
+                except Empty:
+                    msg = "Timeout exceeded."
+                    raise TIMEOUT(msg) from None
+
+            if incoming is None:
+                self._read_reached_eof = True
+                break
+
+            buf += self._decoder.decode(incoming, final=False)
+
+        return buf
 
     def _read_incoming(self) -> None:
         """Run in a thread to move output from a pipe to a queue."""
@@ -283,3 +307,45 @@ class PopenSpawn(SpawnBase[AnyStr]):
     def sendeof(self) -> None:
         """Close the stdin pipe from the writing end."""
         cast("IO[bytes]", self.proc.stdin).close()
+
+    def isalive(self) -> bool:
+        """Test whether the child process is still running.
+
+        This is non-blocking. If the child has already exited, this records
+        its exitstatus or signalstatus and sets terminated -- the way
+        :meth:`wait` does -- rather than merely reporting that it is gone.
+        """
+        if self.proc.poll() is None:
+            return True
+        self.wait()
+        return False
+
+    def close(self) -> None:
+        """Close the connection with the child application.
+
+        Calling this method a second time does nothing. There is no
+        pseudo-terminal here for stdin EOF to reliably end the child: a
+        child that ignores it (``sleep 5``) would otherwise make ``with``
+        block for five seconds, and one that never exits on stdin EOF would
+        block forever. So, like :meth:`pty_spawn.spawn.close`, this
+        escalates instead of only waiting: close stdin, wait, SIGTERM, wait,
+        SIGKILL, wait.
+        """
+        if self.closed:
+            return
+
+        self.flush()
+        cast("IO[bytes]", self.proc.stdin).close()
+
+        try:
+            self.proc.wait(timeout=self.delayafterclose)
+        except subprocess.TimeoutExpired:
+            self.kill(signal.SIGTERM)
+            try:
+                self.proc.wait(timeout=self.delayafterterminate)
+            except subprocess.TimeoutExpired:
+                self.kill(signal.SIGKILL)
+                self.proc.wait()
+
+        self.isalive()  # record exitstatus/signalstatus/terminated
+        self.closed = True

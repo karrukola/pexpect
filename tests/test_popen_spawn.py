@@ -228,6 +228,144 @@ class ExpectTestCase(pexpect_test_case.PexpectTestCase):
         assert p.signalstatus == signal.SIGKILL
         assert p.terminated
 
+    def test_context_manager_closes_the_child(self) -> None:
+        """Use PopenSpawn as a context manager, which needs close().
+
+        Given a ``cat`` child used in a ``with`` block,
+        When the block exits,
+        Then ``SpawnBase.__exit__`` can call :meth:`PopenSpawn.close` -- which
+        used to be missing, raising AttributeError -- and the child is gone.
+        """
+        with PopenSpawn("cat", timeout=5) as p:
+            p.sendline(b"hi")
+            p.expect(b"hi")
+
+        assert p.closed
+        assert not p.isalive()
+
+    def test_close_after_sendeof_does_not_raise(self) -> None:
+        """Close a child whose stdin is already closed, twice.
+
+        Given a ``cat`` child that has already seen EOF on its own via
+        :meth:`sendeof`,
+        When :meth:`PopenSpawn.close` is called, and then called again,
+        Then neither call raises, the second is a no-op, and the exit status
+        of the child is recorded.
+        """
+        p = PopenSpawn("cat", timeout=5)
+        p.sendeof()
+        p.expect(pexpect.EOF)
+
+        p.close()
+        assert p.closed
+        assert p.exitstatus == 0
+        assert p.terminated
+
+        p.close()  # a second call must be a no-op, like the other spawn classes
+        assert p.closed
+
+    def test_close_terminates_a_child_that_ignores_stdin_eof(self) -> None:
+        """Close a child that stdin EOF alone cannot end.
+
+        Given a ``sleep`` child, which never reads its stdin so closing it
+        does nothing,
+        When :meth:`PopenSpawn.close` is called,
+        Then it does not block for the full sleep -- it falls through to
+        SIGTERM, which returns promptly -- and the signal is recorded.
+        """
+        p = PopenSpawn("sleep 5")
+        p.delayafterclose = 0.05
+        p.delayafterterminate = 0.05
+
+        p.close()
+
+        assert p.closed
+        assert not p.isalive()
+        assert p.exitstatus is None
+        assert p.signalstatus == signal.SIGTERM
+        assert p.terminated
+
+    def test_close_kills_a_child_that_ignores_sigterm(self) -> None:
+        """Escalate to SIGKILL for a child that ignores SIGTERM too.
+
+        Given a child that ignores both stdin EOF and SIGTERM,
+        When :meth:`PopenSpawn.close` is called,
+        Then it escalates all the way to SIGKILL, which the child cannot
+        ignore, and that signal is recorded.
+        """
+        ignores_sigterm = (
+            "import signal, sys, time\n"
+            "signal.signal(signal.SIGTERM, signal.SIG_IGN)\n"
+            "print('ready')\n"
+            "sys.stdout.flush()\n"
+            "time.sleep(5)\n"
+        )
+        p = PopenSpawn([sys.executable, "-c", ignores_sigterm])
+        # Wait for the handler to actually be installed before close() sends
+        # SIGTERM, or a slow interpreter start-up would race it: the signal
+        # would arrive -- and be handled by the *default* action -- before
+        # the child's own call to signal.signal() ran.
+        p.expect(b"ready")
+        p.delayafterclose = 0.05
+        p.delayafterterminate = 0.05
+
+        p.close()
+
+        assert p.closed
+        assert not p.isalive()
+        assert p.exitstatus is None
+        assert p.signalstatus == signal.SIGKILL
+        assert p.terminated
+
+    def test_isalive_while_running(self) -> None:
+        """Report a running child as alive without touching its exit status.
+
+        Given a ``cat`` child that has not been asked to exit,
+        When :meth:`PopenSpawn.isalive` is called,
+        Then it returns True and leaves exitstatus/signalstatus untouched.
+        """
+        p = PopenSpawn("cat", timeout=5)
+        try:
+            assert p.isalive()
+            assert p.exitstatus is None
+            assert p.signalstatus is None
+        finally:
+            p.kill(signal.SIGKILL)
+            p.proc.wait()
+
+    def test_isalive_records_exit_status(self) -> None:
+        """Record the exit status of a child that exited on its own.
+
+        Given a child that has exited with status 1,
+        When :meth:`PopenSpawn.isalive` is called,
+        Then it returns False and records exitstatus/terminated, the way
+        :meth:`wait` does.
+        """
+        p = PopenSpawn([sys.executable, "exit1.py"])
+        p.expect(pexpect.EOF)
+        p.proc.wait()  # make sure the OS has reaped it before polling
+
+        assert p.isalive() is False
+        assert p.exitstatus == 1
+        assert p.signalstatus is None
+        assert p.terminated
+
+    def test_isalive_records_signal_status(self) -> None:
+        """Record the signal that killed a child.
+
+        Given a ``cat`` child sent SIGKILL,
+        When :meth:`PopenSpawn.isalive` is called,
+        Then it returns False and records signalstatus/terminated.
+        """
+        p = PopenSpawn("cat")
+        p.kill(signal.SIGKILL)
+        p.proc.wait()  # make sure the OS has reaped it before polling
+
+        assert p.isalive() is False
+        assert p.exitstatus is None
+        assert p.signalstatus == signal.SIGKILL
+        assert p.terminated
+
     def test_read_after_eof_drains_the_buffer(self) -> None:
         """Hand out what is left in the buffer before reporting EOF.
 
@@ -276,6 +414,65 @@ class ExpectTestCase(pexpect_test_case.PexpectTestCase):
         """
         p = PopenSpawn("cat", timeout=5)
         assert p.read_nonblocking(size=0, timeout=5) == b""
+        p.sendeof()
+        p.expect(pexpect.EOF)
+
+    def test_read_nonblocking_raises_timeout_when_nothing_arrives(self) -> None:
+        """Raise TIMEOUT instead of returning empty when nothing arrives.
+
+        Given a ``cat`` child that has been sent nothing to echo back,
+        When read_nonblocking() is called with a timeout,
+        Then it raises TIMEOUT once that timeout passes -- the behaviour
+        every other spawn class's read_nonblocking() has -- rather than
+        returning an empty string as if it were EOF.
+
+        A real, small slice of wall-clock time is spent here: Queue.get()
+        waits on the un-monkeypatched clock even under the fast_sleep
+        fixture, which is exactly why the timeout below is kept short.
+        """
+        p = PopenSpawn("cat", timeout=5)
+        try:
+            with pytest.raises(pexpect.TIMEOUT):
+                p.read_nonblocking(size=10, timeout=0.05)
+        finally:
+            p.kill(signal.SIGKILL)
+            p.proc.wait()
+
+    def test_read_nonblocking_raises_timeout_immediately_for_a_zero_timeout(self) -> None:
+        """Raise TIMEOUT without waiting when a zero timeout is given.
+
+        Given a ``cat`` child with nothing queued yet,
+        When read_nonblocking() is called with ``timeout=0``,
+        Then it raises TIMEOUT straight away rather than making a blocking
+        call to the reader queue.
+        """
+        p = PopenSpawn("cat", timeout=5)
+        try:
+            with pytest.raises(pexpect.TIMEOUT):
+                p.read_nonblocking(size=10, timeout=0)
+        finally:
+            p.kill(signal.SIGKILL)
+            p.proc.wait()
+
+    def test_expect_matches_promptly_instead_of_waiting_out_the_timeout(self) -> None:
+        """Match quickly rather than busy-polling for the whole timeout.
+
+        Given a ``cat`` child that echoes back a line right away,
+        When expect() waits for it with a generous timeout,
+        Then the match comes back almost immediately -- this is the
+        regression guard for the trap in this fix: waiting for *size*
+        characters instead of the first one turned a millisecond-scale match
+        into the full timeout. Timed with perf_counter(), which fast_sleep
+        does not fake, unlike time.time().
+        """
+        p = PopenSpawn("cat", timeout=5)
+        p.sendline(b"hello")
+
+        started = time.perf_counter()
+        p.expect(b"hello")
+        elapsed = time.perf_counter() - started
+
+        assert elapsed < 1.0
         p.sendeof()
         p.expect(pexpect.EOF)
 
