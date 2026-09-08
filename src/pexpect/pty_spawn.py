@@ -736,12 +736,17 @@ class spawn(SpawnBase[AnyStr]):
         coerced = cast("AnyStr", self._coerce_send_string(s))
         return self.send(coerced + self.linesep)
 
-    def _log_control(self, s: bytes) -> None:
-        """Write control characters to the appropriate log files."""
+    def _log_control(self, s: bytes, direction: str = "send") -> None:
+        """Log bytes that never passed through the encoder, in this spawn's string mode.
+
+        The control characters sendcontrol() and sendeof() write, and the raw
+        chunks interact() shuttles in either direction: all of them are bytes
+        in hand, while a spawn with an encoding logs to a text stream.
+        """
         logged: str | bytes = s
         if self.encoding is not None:
             logged = s.decode(self.encoding, "replace")
-        self._log(logged, "send")
+        self._log(logged, direction)
 
     def sendcontrol(self, char: str) -> int:
         r"""Send a control character to the child by mnemonic name.
@@ -983,7 +988,7 @@ class spawn(SpawnBase[AnyStr]):
             return False
         if output_filter:
             data = output_filter(data)
-        self._log(data, "read")
+        self._log_control(data, "read")
         os.write(self.STDOUT_FILENO, data)
         return True
 
@@ -1002,10 +1007,10 @@ class spawn(SpawnBase[AnyStr]):
         if i != -1:
             data = data[:i]
             if data:
-                self._log(data, "send")
+                self._log_control(data)
             self.__interact_writen(self.child_fd, data)
             return False
-        self._log(data, "send")
+        self._log_control(data)
         self.__interact_writen(self.child_fd, data)
         return True
 

@@ -26,6 +26,7 @@ try:
 except ImportError:
     pass
 
+import io
 import sys
 from pathlib import Path
 
@@ -55,6 +56,33 @@ def main() -> None:
         p = pexpect.spawn(f"{sys.executable} exit1.py", env=no_coverage_env())
         p.expect(pexpect.EOF)
         p.interact()
+        print("Escaped interact")
+        return
+
+    if "--logfile" in sys.argv:
+        # A str-mode spawn with a logfile set: interact() must decode the raw
+        # bytes it copies before handing them to a text-mode log, rather than
+        # crashing on the first keystroke in either direction.
+        #
+        # cat prints nothing of its own accord, so this shell wrapper echoes
+        # READY before exec'ing into it. That READY only reaches our own
+        # stdout by being copied through interact()'s loop, which is what
+        # lets the caller below synchronize on it the way it does on getch.py's
+        # own READY: seeing it proves stdin is already in raw mode, so a send
+        # right after it is never mistaken for terminal input by a still-cooked
+        # tty and lost before interact() ever reads it.
+        p_str = pexpect.spawn("/bin/sh", ["-c", "echo READY; exec cat"], encoding="utf-8")
+        log = io.StringIO()
+        log_read = io.StringIO()
+        log_send = io.StringIO()
+        p_str.logfile = log
+        p_str.logfile_read = log_read
+        p_str.logfile_send = log_send
+        p_str.interact(escape_character=chr(29))
+        print(f"LOG={log.getvalue()!r}<STOP>")
+        print(f"LOG_READ={log_read.getvalue()!r}<STOP>")
+        print(f"LOG_SEND={log_send.getvalue()!r}<STOP>")
+        print(f"LOG_TYPE={type(log.getvalue()).__name__}<STOP>")
         print("Escaped interact")
         return
 

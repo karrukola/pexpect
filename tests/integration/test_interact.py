@@ -18,13 +18,18 @@ OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 
 """
 
+import ast
 import os
 import unittest
+from typing import TYPE_CHECKING, cast
 
 import pytest
 
 import pexpect
 from tests import pexpect_test_case
+
+if TYPE_CHECKING:
+    import re
 
 pytestmark = pytest.mark.usefixtures("fast_sleep", "child_coverage")
 
@@ -149,6 +154,67 @@ class InteractTestCase(pexpect_test_case.PexpectTestCase):
         p.expect(pexpect.EOF)
         assert not p.isalive()
         assert p.exitstatus == 0
+
+    def test_interact_str_mode_with_logfile(self) -> None:
+        """A str-mode interact() with a logfile survives the round trip.
+
+        Given a spawn built with an encoding, whose logfile, logfile_read and
+        logfile_send are text streams,
+        When interact() copies a keystroke and the child's reply,
+        Then it does not raise, what it logged is str, and the read/send
+        split matches what was typed and what came back.
+        """
+        p = pexpect.spawn(f"{self.interact_py} --logfile", timeout=5, env=self.env)
+        # This READY is copied through interact()'s own loop (see interact.py),
+        # so seeing it here proves stdin is already in raw mode: a send right
+        # after it cannot be swallowed by a still-cooked tty before interact()
+        # gets a chance to read it.
+        p.expect("READY")
+        p.send("hi\r")
+        # cat echoes the line back twice: once as the pty's own local echo,
+        # then again as cat itself copies stdin to stdout.
+        p.expect_exact("hi")
+        if not os.environ.get("CI", None):
+            # On CI platforms, we sometimes miss trailing stdout from the
+            # chain of child processes (see test_interact_escape_none above
+            # for the same workaround), so the second echo is not guaranteed
+            # to have landed by the time we escape.
+            p.expect_exact("hi\r\nhi\r\n")
+        p.sendcontrol("]")  # chr(29), the escape character used by --logfile
+
+        def read_value(name: str) -> str:
+            # non-greedy: pexpect compiles patterns with re.DOTALL, so a
+            # greedy `.*` would run past this line's <STOP> to the last one.
+            p.expect(rf"{name}=(.*?)<STOP>")
+            match = cast("re.Match[bytes]", p.match)
+            value = ast.literal_eval(match.group(1).decode())
+            assert isinstance(value, str)
+            return value
+
+        log = read_value("LOG")
+        log_read = read_value("LOG_READ")
+        log_send = read_value("LOG_SEND")
+        p.expect(r"LOG_TYPE=(.*?)<STOP>")
+        log_type = cast("re.Match[bytes]", p.match).group(1).decode()
+
+        p.expect_exact("Escaped interact")
+        p.expect(pexpect.EOF)
+        assert not p.isalive()
+        assert p.exitstatus == 0
+
+        assert log_type == "str"
+        # The READY banner is itself real child output copied through
+        # interact(), so it is on the read side of the log too; strip it
+        # before comparing the round trip we typed.
+        ready = "READY\r\n"
+        assert log_read.startswith(ready)
+        log_read = log_read[len(ready) :]
+        assert log == ready + log_send + log_read
+
+        assert log_send == "hi\r"
+        assert log_read.startswith("hi\r\n")
+        if not os.environ.get("CI", None):
+            assert log_read == "hi\r\nhi\r\n"
 
     def test_interact_with_a_dead_child(self) -> None:
         """Return straight away when the child has already exited.
