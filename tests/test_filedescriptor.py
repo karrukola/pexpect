@@ -20,7 +20,6 @@ OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 
 import os
 import unittest
-from pathlib import Path
 
 import pytest
 
@@ -75,7 +74,13 @@ class ExpectTestCase(pexpect_test_case.PexpectTestCase):
 
     def test_fileobj(self) -> None:
         """Accept a file object and take its descriptor from it."""
-        f = Path("TESTDATA.txt").open()  # noqa: SIM115  # fdspawn takes ownership of the fd
+        fd = os.open("TESTDATA.txt", os.O_RDONLY)
+        # closefd=False, because fdspawn takes ownership of the descriptor and
+        # close() below closes it. A file object that thinks it still owns the
+        # descriptor closes it a second time from its finalizer, where the
+        # EBADF that follows becomes an unraisable exception and the object
+        # itself is reported as an unclosed file.
+        f = os.fdopen(fd, closefd=False)
         s = fdpexpect.fdspawn(f)  # Should get the fileno from the file handle
         s.expect("2")
         s.close()
