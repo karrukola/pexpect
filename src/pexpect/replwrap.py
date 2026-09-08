@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import signal
 import sys
 from pathlib import Path
@@ -15,6 +16,14 @@ if TYPE_CHECKING:
 
 PEXPECT_PROMPT = "[PEXPECT_PROMPT>"
 PEXPECT_CONTINUATION_PROMPT = "[PEXPECT_PROMPT+"
+
+# The prompt _repl_sh() forces a shell into before it can send anything, and the
+# pattern that matches it. Neither shell's own default will do: bash's is
+# `\s-\v\$ ` and zsh's is `%m%#`, which render as `bash-5.2$` and `host%` --
+# and as `bash-5.2#` and `host#` for root -- so the only prompt both shells can
+# be relied on to show is one that was given to them.
+_SH_PROMPT = "$"
+_SH_PROMPT_PATTERN = r"\$"
 
 
 class REPLWrapper:
@@ -186,7 +195,15 @@ def python(command: str = sys.executable) -> REPLWrapper:
 
 
 def _repl_sh(command: str, args: list[str], non_printable_insert: str) -> REPLWrapper:
-    child = pexpect.spawn(command, args, echo=False, encoding="utf-8")
+    # PS1 is forced here rather than left to the shell or to the caller. bash
+    # gets the prompt it is matched against from the bundled bashrc.sh, but zsh
+    # is started with --no-rcs and so reads no startup file at all; the
+    # environment is the only channel left. Without this, _SH_PROMPT_PATTERN
+    # never matches zsh's default `%m%#` and zsh waits out the full
+    # timeout -- which the test suite used to hide by exporting a PS1 of its own
+    # before spawning.
+    env = {**os.environ, "PS1": _SH_PROMPT}
+    child = pexpect.spawn(command, args, echo=False, encoding="utf-8", env=env)
 
     # If the user runs 'env', the value of PS1 will be in the output. To avoid
     # replwrap seeing that as the next prompt, we'll embed the marker characters
@@ -196,7 +213,7 @@ def _repl_sh(command: str, args: list[str], non_printable_insert: str) -> REPLWr
     ps2 = PEXPECT_CONTINUATION_PROMPT[:5] + non_printable_insert + PEXPECT_CONTINUATION_PROMPT[5:]
     prompt_change = f"PS1='{ps1}' PS2='{ps2}' PROMPT_COMMAND=''"
 
-    return REPLWrapper(child, "\\$", prompt_change, extra_init_cmd="export PAGER=cat")
+    return REPLWrapper(child, _SH_PROMPT_PATTERN, prompt_change, extra_init_cmd="export PAGER=cat")
 
 
 def bash(command: str = "bash") -> REPLWrapper:

@@ -2,7 +2,8 @@
 
 Bugs and latent defects found while running a full `ruff` lint pass over the
 repository, later while taking the test suite to 100% line and branch coverage,
-and later still while annotating the package for `mypy`. Every entry was left
+later still while annotating the package for `mypy`, and last while getting the
+suite to run clean on 3.10 through 3.14. Every entry was left
 alone at the time it was found, because fixing it would change runtime
 behaviour and that was out of scope for all three passes — the lint work was
 required to be behaviour-preserving, the coverage work to add tests rather than
@@ -11,7 +12,10 @@ change the library, and the typing work to add annotations rather than either.
 **Four are now fixed**, and are marked as such where they appear: 21, 27, 29
 and 30. The annotations could not describe those four without either stating
 something untrue about the code or preserving the defect behind a cast, so they
-were fixed first, separately. Everything else here is still outstanding.
+were fixed first, separately. Number 31 is fixed too, for a different reason:
+it stopped `replwrap.zsh()` from working at all on a machine that had not been
+configured for it, and the test that should have caught it was supplying the
+missing configuration itself. Everything else here is still outstanding.
 
 Line numbers refer to the tree as of the lint pass and were each verified
 against the source, not inferred from the rule that surfaced them. The
@@ -539,6 +543,54 @@ the first read. `expect()` always passes a timeout explicitly, which is why the
 suite never reached it.
 
 **Fixed:** `if` rather than `elif`.
+
+---
+
+## Found during the test-suite pass
+
+Both of these came out of getting the suite to run on 3.10 through 3.14. The
+shells `replwrap` drives had to be installed before any of it could run at all,
+and once zsh was present it turned out that only the test harness had ever made
+`replwrap.zsh()` work.
+
+### 31. `replwrap.zsh()` never worked on an unconfigured machine — **fixed**
+
+**`src/pexpect/replwrap.py:196` (`_repl_sh`)**
+
+`_repl_sh` waits for the pattern `\$` as the shell's first prompt. `bash()`
+supplies that itself: it starts bash with the bundled `bashrc.sh`, which sets
+`PS1="$"`. `zsh()` starts zsh with `--no-rcs`, so no startup file is read and
+nothing sets a prompt — and zsh's own default is `%m%#`, which renders as
+`host%`, or `host#` for root, and contains no `$` at all. `replwrap.zsh()`
+therefore waited out the full 30-second timeout and raised `TIMEOUT` for any
+caller whose inherited `PS1` did not happen to contain a `$`.
+
+`test_zsh` did not catch it because `REPLWrapTestBase.setUp` ran
+`os.putenv("PS1", r"\$")` before spawning anything, so the harness supplied the
+one condition the library was missing. The test passed while the public function
+was unusable.
+
+**Fixed:** `_repl_sh` forces `PS1` in the child's environment, which is the only
+channel left once `--no-rcs` has ruled out a startup file, and the pin is gone
+from the tests. With the pin gone and the fix reverted, `test_zsh` fails.
+
+### 32. `replwrap.zsh()` cannot detect incomplete input
+
+**`src/pexpect/replwrap.py:183` (`run_command`)**
+
+On bash, an unterminated quote produces the continuation prompt, `run_command`
+sees it as match index 1, sends SIGINT and raises `ValueError`. On zsh the same
+input matches neither prompt: `run_command("echo '5 6")` waits out its timeout
+and raises `TIMEOUT` instead. This is not a `PS2` that failed to arrive — a zsh
+child started by `_repl_sh` reports both `PS2` and `PROMPT2` as the expected
+marker — so what zsh emits in that state has not been established.
+
+Nothing covers it. `test_zsh` exercises the empty-input branch,
+`run_command("")`, which raises `ValueError` before any shell is involved;
+`test_multiline`, the only test of the continuation path, runs bash alone.
+
+**Fix:** find what zsh prints for an incomplete command and match it too, or
+document continuation handling as bash-only.
 
 ---
 
