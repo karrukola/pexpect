@@ -27,13 +27,17 @@ PEXPECT LICENSE
 
 """
 
+from __future__ import annotations
+
 import os
-from collections.abc import Iterable
-from typing import IO, NoReturn, Protocol
+from typing import IO, TYPE_CHECKING, AnyStr, NoReturn, Protocol, cast, overload
 
 from .exceptions import TIMEOUT, ExceptionPexpect
 from .spawnbase import SpawnBase
 from .utils import poll_ignore_interrupts, select_ignore_interrupts
+
+if TYPE_CHECKING:
+    from collections.abc import Iterable
 
 __all__ = ["fdspawn"]
 
@@ -42,12 +46,40 @@ class _HasFileno(Protocol):
     def fileno(self) -> int: ...
 
 
-class fdspawn(SpawnBase):
+class fdspawn(SpawnBase[AnyStr]):
     """Like pexpect.spawn, but reading and writing a file descriptor you supply.
 
     For example, you could use it to read through a file looking for patterns,
     or to control a modem or serial device.
     """
+
+    @overload
+    def __init__(
+        self: fdspawn[bytes],
+        fd: int | _HasFileno,
+        args: None = None,
+        timeout: float | None = 30,
+        maxread: int = 2000,
+        searchwindowsize: int | None = None,
+        logfile: IO[bytes] | IO[str] | None = None,
+        encoding: None = None,
+        codec_errors: str = "strict",
+        use_poll: bool = False,
+    ) -> None: ...
+
+    @overload
+    def __init__(
+        self: fdspawn[str],
+        fd: int | _HasFileno,
+        args: None = None,
+        timeout: float | None = 30,
+        maxread: int = 2000,
+        searchwindowsize: int | None = None,
+        logfile: IO[bytes] | IO[str] | None = None,
+        encoding: str = ...,
+        codec_errors: str = "strict",
+        use_poll: bool = False,
+    ) -> None: ...
 
     def __init__(
         self,
@@ -141,16 +173,16 @@ class fdspawn(SpawnBase):
     # directly.
     def send(self, s: str | bytes) -> int:
         """Write to fd, return number of bytes written."""
-        s = self._coerce_send_string(s)
-        self._log(s, "send")
+        data = cast("AnyStr", self._coerce_send_string(s))
+        self._log(data, "send")
 
-        b = self._encoder.encode(s, final=False)
+        b = self._encoder.encode(data, final=False)
         return os.write(self.child_fd, b)
 
     def sendline(self, s: str | bytes) -> int:
         """Write to fd with trailing newline, return number of bytes written."""
-        s = self._coerce_send_string(s)
-        return self.send(s + self.linesep)
+        data = cast("AnyStr", self._coerce_send_string(s))
+        return self.send(data + self.linesep)
 
     def write(self, s: str | bytes) -> None:
         """Write to fd, return None."""
@@ -161,7 +193,7 @@ class fdspawn(SpawnBase):
         for s in sequence:
             self.write(s)
 
-    def read_nonblocking(self, size: int = 1, timeout: float | None = -1) -> str | bytes:
+    def read_nonblocking(self, size: int = 1, timeout: float | None = -1) -> AnyStr:
         """Read from the file descriptor and return the result as a string.
 
         The read_nonblocking method of :class:`SpawnBase` assumes that a call
@@ -180,8 +212,8 @@ class fdspawn(SpawnBase):
             if timeout == -1:
                 timeout = self.timeout
             rlist = [self.child_fd]
-            wlist = []
-            xlist = []
+            wlist: list[int] = []
+            xlist: list[int] = []
             if self.use_poll:
                 rlist = poll_ignore_interrupts(rlist, timeout)
             else:
@@ -189,4 +221,7 @@ class fdspawn(SpawnBase):
             if self.child_fd not in rlist:
                 msg = "Timeout exceeded."
                 raise TIMEOUT(msg)
-        return super().read_nonblocking(size)
+        # mypy checks this body once per string type but leaves the class's
+        # type variable unexpanded in a super() call, so the base's AnyStr has
+        # to be restated here.
+        return cast("AnyStr", super().read_nonblocking(size))

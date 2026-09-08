@@ -26,10 +26,22 @@ PEXPECT LICENSE
 #     http://vt100.net/docs/vt220-rm/
 #     http://www.termsys.demon.co.uk/vtansi.htm
 
+from __future__ import annotations
+
 import string
 from pathlib import Path
+from typing import TYPE_CHECKING, cast
 
 from . import FSM, screen
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
+
+    # screen.screen.__init__ takes (r, c, encoding, encoding_errors). term and
+    # ANSI forward the trailing arguments through *args and **kwargs, whose one
+    # element type cannot describe two differently typed parameters, so the
+    # forwarding target is typed as an unchecked callable.
+    _ScreenInit = Callable[..., None]
 
 # Parameter of <ESC>[{n}J and <ESC>[{n}K that selects the whole screen or line.
 ERASE_ALL = 2
@@ -205,8 +217,12 @@ def DoLog(fsm: FSM.FSM) -> None:
     """Append the input symbol and the current state to a file named 'log'."""
     screen = fsm.memory[0]
     fsm.memory = [screen]
+    # Every transition that logs is driven by ANSI.write(), which feeds the
+    # machine one character at a time between the string states below.
+    input_symbol = cast("str", fsm.input_symbol)
+    current_state = cast("str", fsm.current_state)
     with Path("log").open("a") as fout:
-        fout.write(fsm.input_symbol + "," + fsm.current_state + "\n")
+        fout.write(input_symbol + "," + current_state + "\n")
 
 
 class term(screen.screen):
@@ -218,7 +234,8 @@ class term(screen.screen):
 
     def __init__(self, r: int = 24, c: int = 80, *args: str | None, **kwargs: str | None) -> None:
         """Initialize a terminal with a screen of the given dimensions."""
-        screen.screen.__init__(self, r, c, *args, **kwargs)
+        screen_init: _ScreenInit = screen.screen.__init__
+        screen_init(self, r, c, *args, **kwargs)
 
 
 class ANSI(term):

@@ -225,3 +225,4 @@ __marimo__/
 
 # Project-specific
 coverage-reports/*
+reports/*

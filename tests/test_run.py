@@ -18,17 +18,29 @@ OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 
 """
 
+from __future__ import annotations
+
 import os
 import subprocess
 import sys
 import unittest
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import pytest
 
 import pexpect
 
 from . import pexpect_test_case
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
+
+    from pexpect.run import _Events
+
+    # run() hands back bytes and runu() str. The two test classes below share
+    # one body, which states the flavour through cr, empty and
+    # prep_subprocess_out instead of through the return type.
+    _RunFunc = Callable[..., Any]
 
 pytestmark = pytest.mark.usefixtures("fast_sleep", "killed_pty_children")
 
@@ -63,9 +75,9 @@ class RunFuncTestCase(pexpect_test_case.PexpectTestCase):
     """Exercise pexpect.run(), its exit status and its events argument."""
 
     if sys.platform != "win32":
-        runfunc = staticmethod(pexpect.run)
-    cr = b"\r"
-    empty = b""
+        runfunc: _RunFunc = staticmethod(pexpect.run)
+    cr: str | bytes = b"\r"
+    empty: str | bytes = b""
     prep_subprocess_out = staticmethod(lambda x: x)
 
     def setUp(self) -> None:
@@ -76,7 +88,7 @@ class RunFuncTestCase(pexpect_test_case.PexpectTestCase):
 
     def test_run_exit(self) -> None:
         """Report the child's non-zero exit status when withexitstatus is set."""
-        (_data, exitstatus) = self.runfunc(sys.executable + " exit1.py", withexitstatus=1)
+        (_data, exitstatus) = self.runfunc(sys.executable + " exit1.py", withexitstatus=True)
         assert exitstatus == 1, "Exit status of 'python exit1.py' should be 1."
 
     def test_run(self) -> None:
@@ -90,7 +102,7 @@ class RunFuncTestCase(pexpect_test_case.PexpectTestCase):
             .rstrip()
         )
 
-        (the_new_way, exitstatus) = self.runfunc("uname -m -n", withexitstatus=1)
+        (the_new_way, exitstatus) = self.runfunc("uname -m -n", withexitstatus=True)
         the_new_way = the_new_way.replace(self.cr, self.empty).rstrip()
 
         assert self.prep_subprocess_out(the_old_way) == the_new_way
@@ -110,17 +122,17 @@ class RunFuncTestCase(pexpect_test_case.PexpectTestCase):
     def test_run_callback(self) -> None:
         """A TIMEOUT event callback can stop a child that never exits."""
         # TODO it seems like this test could block forever if run fails...
-        events = {pexpect.TIMEOUT: timeout_callback}
+        events: _Events = {pexpect.TIMEOUT: timeout_callback}
         self.runfunc("cat", timeout=0.01, events=events)
 
     def test_run_bad_exitstatus(self) -> None:
         """A failing command reports a non-zero exit status."""
-        (_the_new_way, exitstatus) = self.runfunc("ls -l /najoeufhdnzkxjd", withexitstatus=1)
+        (_the_new_way, exitstatus) = self.runfunc("ls -l /najoeufhdnzkxjd", withexitstatus=True)
         assert exitstatus != 0
 
     def test_run_event_as_string(self) -> None:
         """An event response may be a plain string to send to the child."""
-        events = [
+        events: _Events = [
             # second match on 'abc', echo 'def'
             ("abc\r\n.*GO:", 'echo "def"\n'),
             # final match on 'def': exit
@@ -136,7 +148,7 @@ class RunFuncTestCase(pexpect_test_case.PexpectTestCase):
 
     def test_run_event_as_function(self) -> None:
         """An event response may be a module-level function."""
-        events = [("GO:", function_events_callback)]
+        events: _Events = [("GO:", function_events_callback)]
 
         (_data, exitstatus) = pexpect.run(
             "bash --norc", withexitstatus=True, events=events, env=self.runenv, timeout=10
@@ -145,7 +157,7 @@ class RunFuncTestCase(pexpect_test_case.PexpectTestCase):
 
     def test_run_event_as_method(self) -> None:
         """An event response may be a bound method."""
-        events = [("GO:", self._method_events_callback)]
+        events: _Events = [("GO:", self._method_events_callback)]
 
         (_data, exitstatus) = pexpect.run(
             "bash --norc", withexitstatus=True, events=events, env=self.runenv, timeout=10
@@ -155,10 +167,11 @@ class RunFuncTestCase(pexpect_test_case.PexpectTestCase):
     def test_run_event_typeerror(self) -> None:
         """An event response that is neither string nor callable raises TypeError."""
         events = [("GO:", -1)]
+        # -1 is not a response run() accepts, which is the point of the test, so
+        # the call goes through a name that does not describe what run() takes.
+        runner: Callable[..., object] = pexpect.run
         with pytest.raises(TypeError):
-            pexpect.run(
-                "bash --norc", withexitstatus=True, events=events, env=self.runenv, timeout=10
-            )
+            runner("bash --norc", withexitstatus=True, events=events, env=self.runenv, timeout=10)
 
     def _method_events_callback(self, values: dict[str, Any]) -> str | None:
         """Drive the shell through three echo stages, as a bound method."""

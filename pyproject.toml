@@ -53,6 +53,7 @@ dev = [
     "covdefaults>=2.3.0",
     "coverage>=7.16.0",
     "coveralls>=4.1.0",
+    "mypy>=2.3.1",
     "nox>=2026.8.17",
     "pytest>=9.1.1",
     "pytest-cov>=7.1.0",
@@ -73,7 +74,7 @@ version_scheme = "no-guess-dev"
 local_scheme = "no-local-version"
 
 [tool.uv]
-python-preference = "only-system"
+# python-preference = "only-system"
 
 # Ensure that we use the public Python Package Index.
 [[tool.uv.index]]
@@ -203,3 +204,15 @@ lint.per-file-ignores."src/pexpect/spawnbase.py" = [
 addopts = [
     "--timeout=0.15"  # [seconds], enforced by pytest-timeout plugin
 ]
+
+
+[tool.mypy]
+check_untyped_defs = true
+
+
+# ptyprocess ships no py.typed marker. Following its untyped source keeps
+# `PtyProcess` members resolvable (spawn.ptyproc is used throughout pty_spawn)
+# without silencing the import error, which would make the whole module Any.
+[[tool.mypy.overrides]]
+module = [ "ptyprocess", "ptyprocess.*" ]
+follow_untyped_imports = true

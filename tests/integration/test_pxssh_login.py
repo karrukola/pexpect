@@ -28,6 +28,14 @@ _SYNC_MULTIPLIER = 0.02
 _PROMPT_SET_TIMEOUT = 0.05
 
 
+class _UnpromptablePxssh(pxssh.pxssh):
+    """A pxssh whose unique-prompt step always fails."""
+
+    def set_unique_prompt(self) -> bool:
+        """Report that the prompt could not be set."""
+        return False
+
+
 class PxsshLoginTestCase(SSHTestBase):
     """Tests that log in to the fake server for real."""
 
@@ -49,8 +57,7 @@ class PxsshLoginTestCase(SSHTestBase):
 
     def test_failed_set_unique_prompt(self) -> None:
         """Fail the login when the unique prompt cannot be set."""
-        ssh = pxssh.pxssh()
-        ssh.set_unique_prompt = lambda: False
+        ssh = _UnpromptablePxssh()
         try:
             ssh.login(
                 "server",

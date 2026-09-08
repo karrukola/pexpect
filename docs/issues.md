@@ -550,9 +550,14 @@ delete.
 
 | Location | What |
 |---|---|
-| `tests/test_async.py:5` | `try: import asyncio / except ImportError` shim, plus the `@unittest.skipIf(asyncio is None, ...)` it feeds |
-| `tests/pexpect_test_case.py:29` | `aiounittest` fallback for `IsolatedAsyncioTestCase`, dead since Python 3.8 |
 | `tests/qa.py` | Referenced by no test, doc or config. Was Python 2-only until the lint pass. Deletion candidate. |
+
+Two entries have left this table. The `asyncio` and `aiounittest` `ImportError`
+shims, and the `skipIf` guard that read one of them, were deleted in the typing
+pass, which had to resolve every import it could not otherwise annotate; the
+same pass removed `tests/deprecated_test_filedescriptor.py` and
+`tests/deprecated_test_run_out_of_pty.py`, unreferenced modules whose sibling
+imports had not resolved since the tests became a package.
 
 ---
 

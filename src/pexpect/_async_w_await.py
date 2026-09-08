@@ -9,7 +9,7 @@ from __future__ import annotations
 import asyncio
 import errno
 import signal
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 from pexpect import EOF
 
@@ -49,11 +49,13 @@ async def repl_run_command_async(
     repl: REPLWrapper, cmdlines: list[str], timeout: float | None = -1
 ) -> str:
     """Feed ``cmdlines`` to the REPL one at a time and return its output."""
-    res = []
+    # Each _expect_prompt() below matched, so `before` holds the output the
+    # child sent ahead of that prompt.
+    res: list[str] = []
     repl.child.sendline(cmdlines[0])
     for line in cmdlines[1:]:
         await repl._expect_prompt(timeout=timeout, async_=True)
-        res.append(repl.child.before)
+        res.append(cast("str", repl.child.before))
         repl.child.sendline(line)
 
     # Command was fully submitted, now wait for the next prompt
@@ -64,7 +66,7 @@ async def repl_run_command_async(
         await repl._expect_prompt(timeout=1, async_=True)
         msg = "Continuation prompt found - input was incomplete:"
         raise ValueError(msg)
-    return "".join([*res, repl.child.before])
+    return "".join([*res, cast("str", repl.child.before)])
 
 
 class PatternWaiter(asyncio.Protocol):
@@ -75,23 +77,28 @@ class PatternWaiter(asyncio.Protocol):
     def set_expecter(self, expecter: Expecter) -> None:
         """Bind this protocol to ``expecter`` and arm a fresh future."""
         self.expecter = expecter
-        self.fut = asyncio.Future()
+        # Resolved with the index of the pattern that matched.
+        self.fut: asyncio.Future[int] = asyncio.Future()
 
     def found(self, result: int) -> None:
         """Complete the future with the index of the matched pattern."""
         if not self.fut.done():
             self.fut.set_result(result)
-            self.transport.pause_reading()
+            # Nothing can be found before connection_made() has bound the
+            # transport that delivers the data.
+            cast("asyncio.ReadTransport", self.transport).pause_reading()
 
     def error(self, exc: BaseException) -> None:
         """Complete the future with an exception."""
         if not self.fut.done():
             self.fut.set_exception(exc)
-            self.transport.pause_reading()
+            cast("asyncio.ReadTransport", self.transport).pause_reading()
 
-    def connection_made(self, transport: asyncio.ReadTransport) -> None:
+    def connection_made(self, transport: asyncio.BaseTransport) -> None:
         """Remember the transport so reading can be paused later."""
-        self.transport = transport
+        # connect_read_pipe() only ever hands over a read transport, which is
+        # narrower than what the protocol API promises here.
+        self.transport = cast("asyncio.ReadTransport", transport)
 
     def data_received(self, data: bytes) -> None:
         """Feed newly read data to the expecter, resolving the future on a match."""

@@ -7,7 +7,7 @@
 from __future__ import annotations
 
 import time
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, AnyStr, Generic, cast
 
 from .exceptions import EOF, TIMEOUT
 
@@ -18,13 +18,13 @@ if TYPE_CHECKING:
     from .spawnbase import SpawnBase
 
 
-class Expecter:
+class Expecter(Generic[AnyStr]):
     """Read from a spawn object until one of a searcher's patterns matches."""
 
     def __init__(
         self,
-        spawn: SpawnBase,
-        searcher: searcher_string | searcher_re,
+        spawn: SpawnBase[AnyStr],
+        searcher: searcher_string[AnyStr] | searcher_re[AnyStr],
         searchwindowsize: int | None = -1,
     ) -> None:
         """Bind ``searcher`` to ``spawn``.
@@ -32,16 +32,16 @@ class Expecter:
         A ``searchwindowsize`` of -1 means to use the figure from ``spawn``,
         which should be None or a positive number.
         """
-        self.spawn = spawn
-        self.searcher = searcher
+        self.spawn: SpawnBase[AnyStr] = spawn
+        self.searcher: searcher_string[AnyStr] | searcher_re[AnyStr] = searcher
         if searchwindowsize == -1:
             searchwindowsize = spawn.searchwindowsize
         self.searchwindowsize = searchwindowsize
-        self.lookback = None
+        self.lookback: int | None = None
         if hasattr(searcher, "longest_string"):
             self.lookback = searcher.longest_string
 
-    def do_search(self, window: str | bytes, freshlen: int) -> int | None:
+    def do_search(self, window: AnyStr, freshlen: int) -> int | None:
         """Search ``window`` and return the matching pattern's index, or None.
 
         On a match the spawn object's ``before``, ``after``, ``match`` and
@@ -64,7 +64,7 @@ class Expecter:
             # Found a match
             return index
         if self.searchwindowsize or self.lookback:
-            maintain = self.searchwindowsize or self.lookback
+            maintain = cast("int", self.searchwindowsize or self.lookback)
             if spawn._buffer.tell() > maintain:
                 spawn._buffer = spawn.buffer_type()
                 spawn._buffer.write(window[-maintain:])
@@ -101,7 +101,7 @@ class Expecter:
             window = spawn._buffer.getvalue()
         return self.do_search(window, freshlen)
 
-    def new_data(self, data: str | bytes) -> int | None:
+    def new_data(self, data: AnyStr) -> int | None:
         """Buffer freshly read ``data`` and search it.
 
         This is a subsequent call, after a call to existing_data.
@@ -208,7 +208,7 @@ class Expecter:
             if idx is not None:
                 return idx
             if timeout is not None:
-                timeout = end_time - time.time()
+                timeout = cast("float", end_time) - time.time()
 
     def expect_loop(self, timeout: float | None = -1) -> int:
         """Blocking expect."""
@@ -228,7 +228,7 @@ class Expecter:
         return idx
 
 
-class searcher_string:
+class searcher_string(Generic[AnyStr]):
     """Plain string search helper for the spawn.expect_any() method.
 
     This helper class is for speed. For more powerful regex patterns
@@ -247,7 +247,11 @@ class searcher_string:
 
     """
 
-    def __init__(self, strings: Iterable[type[EOF | TIMEOUT] | str | bytes]) -> None:
+    match: AnyStr
+    start: int
+    end: int
+
+    def __init__(self, strings: Iterable[type[EOF | TIMEOUT] | AnyStr]) -> None:
         """Create an instance of searcher_string.
 
         The argument 'strings' may be a list; a sequence of strings; or the EOF
@@ -255,7 +259,7 @@ class searcher_string:
         """
         self.eof_index = -1
         self.timeout_index = -1
-        self._strings = []
+        self._strings: list[tuple[int, AnyStr]] = []
         self.longest_string = 0
         for n, s in enumerate(strings):
             if s is EOF:
@@ -264,8 +268,11 @@ class searcher_string:
             if s is TIMEOUT:
                 self.timeout_index = n
                 continue
-            self._strings.append((n, s))
-            self.longest_string = max(self.longest_string, len(s))
+            # Anything that is neither marker is taken for a search string, and
+            # len() below rejects whatever is not one, exactly as before.
+            text = cast("AnyStr", s)
+            self._strings.append((n, text))
+            self.longest_string = max(self.longest_string, len(text))
 
     def __str__(self) -> str:
         """Return a human-readable string that represents the state of the object."""
@@ -276,12 +283,11 @@ class searcher_string:
         if self.timeout_index >= 0:
             ss.append((self.timeout_index, f"    {self.timeout_index}: TIMEOUT"))
         ss.sort()
-        ss = list(zip(*ss, strict=False))[1]
-        return "\n".join(ss)
+        return "\n".join(list(zip(*ss, strict=False))[1])
 
     def search(
         self,
-        buffer: str | bytes,
+        buffer: AnyStr,
         freshlen: int,
         searchwindowsize: int | None = None,
     ) -> int:
@@ -326,7 +332,7 @@ class searcher_string:
         return best_index
 
 
-class searcher_re:
+class searcher_re(Generic[AnyStr]):
     """Regular expression search helper for the spawn.expect_any() method.
 
     This helper class is for powerful pattern matching. For speed, see the
@@ -345,9 +351,13 @@ class searcher_re:
 
     """
 
+    match: re.Match[AnyStr]
+    start: int
+    end: int
+
     def __init__(
         self,
-        patterns: Iterable[type[EOF | TIMEOUT] | re.Pattern[str] | re.Pattern[bytes]],
+        patterns: Iterable[type[EOF | TIMEOUT] | re.Pattern[AnyStr]],
     ) -> None:
         """Create an instance that searches for 'patterns'.
 
@@ -356,7 +366,7 @@ class searcher_re:
         """
         self.eof_index = -1
         self.timeout_index = -1
-        self._searches = []
+        self._searches: list[tuple[int, re.Pattern[AnyStr]]] = []
         for n, s in enumerate(patterns):
             if s is EOF:
                 self.eof_index = n
@@ -364,7 +374,9 @@ class searcher_re:
             if s is TIMEOUT:
                 self.timeout_index = n
                 continue
-            self._searches.append((n, s))
+            # As in searcher_string: whatever is not a marker is taken for a
+            # pattern, and the search below rejects anything that is not one.
+            self._searches.append((n, cast("re.Pattern[AnyStr]", s)))
 
     def __str__(self) -> str:
         """Return a human-readable string that represents the state of the object."""
@@ -375,12 +387,11 @@ class searcher_re:
         if self.timeout_index >= 0:
             ss.append((self.timeout_index, f"    {self.timeout_index}: TIMEOUT"))
         ss.sort()
-        ss = list(zip(*ss, strict=False))[1]
-        return "\n".join(ss)
+        return "\n".join(list(zip(*ss, strict=False))[1])
 
     def search(
         self,
-        buffer: str | bytes,
+        buffer: AnyStr,
         # ARG002: part of the public searcher protocol
         freshlen: int,  # part of the public searcher protocol  # noqa: ARG002
         searchwindowsize: int | None = None,

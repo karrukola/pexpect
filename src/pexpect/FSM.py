@@ -88,13 +88,16 @@ PEXPECT LICENSE
 from __future__ import annotations
 
 import string
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, cast
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterable
 
     # An action callback is handed the FSM it belongs to and returns nothing.
     _Action = Callable[["FSM"], None]
+    # What both transition tables hold: the action to call and the state to
+    # move to once it has run.
+    _Transition = tuple[_Action | None, object]
 
 
 class ExceptionFSM(Exception):
@@ -112,7 +115,7 @@ class ExceptionFSM(Exception):
 class FSM:
     """Finite State Machine with a user defined "memory"."""
 
-    def __init__(self, initial_state: object, memory: object | None = None) -> None:
+    def __init__(self, initial_state: object, memory: list[Any] | None = None) -> None:
         """Create the FSM with its initial state.
 
         The "memory" attribute is any object that you want to pass along to the
@@ -120,17 +123,20 @@ class FSM:
         typically pass a list to be used as a stack.
         """
         # Map (input_symbol, current_state) --> (action, next_state).
-        self.state_transitions = {}
+        self.state_transitions: dict[tuple[object, object], _Transition] = {}
         # Map (current_state) --> (action, next_state).
-        self.state_transitions_any = {}
-        self.default_transition = None
+        self.state_transitions_any: dict[object, _Transition] = {}
+        self.default_transition: _Transition | None = None
 
-        self.input_symbol = None
+        self.input_symbol: object | None = None
         self.initial_state = initial_state
         self.current_state = self.initial_state
-        self.next_state = None
-        self.action = None
-        self.memory = memory
+        self.next_state: object | None = None
+        self.action: _Action | None = None
+        # Declared as the stack every action callback uses, even though the
+        # constructor's default leaves it None: an FSM built without a memory
+        # has never supported the action callbacks that reach for it.
+        self.memory: list[Any] = cast("list[Any]", memory)
 
     def reset(self) -> None:
         """Set current_state back to initial_state and input_symbol to None.

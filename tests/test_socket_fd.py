@@ -18,8 +18,11 @@ OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 
 """
 
+from __future__ import annotations
+
 import socket
 import unittest
+from typing import TYPE_CHECKING
 
 import pytest
 
@@ -27,6 +30,9 @@ import pexpect
 from pexpect import fdpexpect
 
 from . import test_socket
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 pytestmark = pytest.mark.usefixtures("fast_sleep")
 
@@ -36,14 +42,17 @@ class ExpectTestCase(test_socket.ExpectTestCase):
 
     def spawn(
         self, sock: socket.socket, timeout: float = 30, *, use_poll: bool = False
-    ) -> fdpexpect.fdspawn:
+    ) -> fdpexpect.fdspawn[bytes]:
         """Spawn on the socket's file descriptor rather than on the socket itself."""
         return fdpexpect.fdspawn(sock.fileno(), timeout=timeout, use_poll=use_poll)
 
     def test_not_int(self) -> None:
         """A non-integer file descriptor is rejected."""
+        # What is under test is the argument the signature already rules out, so
+        # the constructor is reached through a name that accepts anything.
+        fdspawn: Callable[..., fdpexpect.fdspawn[bytes]] = fdpexpect.fdspawn
         with pytest.raises(pexpect.ExceptionPexpect):
-            fdpexpect.fdspawn("bogus", timeout=10)
+            fdspawn("bogus", timeout=10)
 
     def test_not_file_descriptor(self) -> None:
         """An invalid file descriptor number is rejected."""

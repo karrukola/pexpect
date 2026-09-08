@@ -27,10 +27,14 @@ except ImportError:
     pass
 
 import sys
+from pathlib import Path
 
-from utils import no_coverage_env
+# This runs as a script from the tests directory, so the package it belongs to
+# is not importable until its parent is on the path.
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import pexpect
+from tests.utils import no_coverage_env
 
 
 def rot_one_input(data: bytes) -> bytes:
@@ -61,7 +65,7 @@ def main() -> None:
     )
 
     # defaults matches api
-    escape_character = chr(29)
+    escape_character: str | None = chr(29)
 
     if len(sys.argv) > 1 and "--no-escape" in sys.argv:
         escape_character = None

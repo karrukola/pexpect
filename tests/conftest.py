@@ -36,7 +36,7 @@ from pexpect import pty_spawn
 
 if TYPE_CHECKING:
     import pathlib
-    from collections.abc import Iterator
+    from collections.abc import Callable, Iterator
 
 # Sleeps at least this long are the ones that follow a signal: pexpect and
 # ptyprocess both settle on 0.1 s for delayafterclose and delayafterterminate.
@@ -108,7 +108,9 @@ def killed_pty_children(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
     coverage data.
     """
     children: list[pty_spawn.spawn] = []
-    spawn_init = pty_spawn.spawn.__init__
+    # Annotating the target is what lets record() forward whatever arguments the
+    # test passed: an overloaded __init__ cannot be called with *args/**kwargs.
+    spawn_init: Callable[..., None] = pty_spawn.spawn.__init__
 
     def record(self: pty_spawn.spawn, *args: object, **kwargs: object) -> None:
         spawn_init(self, *args, **kwargs)

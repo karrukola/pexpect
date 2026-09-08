@@ -1,17 +1,29 @@
 """Tests for sending, matching and logging non-ASCII text."""
 
+from __future__ import annotations
+
 import shutil
 import sys
 import tempfile
 import time
 import unittest
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import pytest
 
 import pexpect
 
 from . import pexpect_test_case
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
+
+    from pexpect.spawnbase import _Pattern
+
+    # The helpers below are driven with either expect() or expect_exact(), which
+    # match the same pattern list in the same way.
+    _Matcher = Callable[[list[_Pattern]], int]
 
 pytestmark = pytest.mark.usefixtures("fast_sleep", "killed_pty_children")
 # the program cat(1) may display ^D\x08\x08 when \x04 (EOF, Ctrl-D) is sent
@@ -52,60 +64,58 @@ class UnicodeTests(pexpect_test_case.PexpectTestCase):
         """Toggle tty echo off and then back on."""
         p = pexpect.spawnu("cat", timeout=5)
         try:
-            self._expect_echo_toggle_off(p)
+            self._expect_echo_toggle_off(p, p.expect)
         except OSError:
             if sys.platform.lower().startswith("sunos"):
                 msg = "Not supported on this platform."
                 raise unittest.SkipTest(msg) from None
             raise
-        self._expect_echo_toggle_on(p)
+        self._expect_echo_toggle_on(p, p.expect)
 
     def test_expect_echo_exact(self) -> None:
         """Like test_expect_echo(), but using expect_exact()."""
         p = pexpect.spawnu("cat", timeout=5)
-        p.expect = p.expect_exact
-        self._expect_echo(p)
+        self._expect_echo(p, p.expect_exact)
 
     def test_expect_setecho_toggle_exact(self) -> None:
         """Toggle tty echo off and back on while using expect_exact()."""
         p = pexpect.spawnu("cat", timeout=5)
-        p.expect = p.expect_exact
         try:
-            self._expect_echo_toggle_off(p)
+            self._expect_echo_toggle_off(p, p.expect_exact)
         except OSError:
             if sys.platform.lower().startswith("sunos"):
                 msg = "Not supported on this platform."
                 raise unittest.SkipTest(msg) from None
             raise
-        self._expect_echo_toggle_on(p)
+        self._expect_echo_toggle_on(p, p.expect_exact)
 
-    def _expect_echo(self, p: pexpect.spawn) -> None:
+    def _expect_echo(self, p: pexpect.spawn[str], matcher: _Matcher) -> None:
         p.sendline("1234")  # Should see this twice (once from tty echo and again from cat).
-        index = p.expect(["1234", "abcdé", "wxyz", pexpect.EOF, pexpect.TIMEOUT])
+        index = matcher(["1234", "abcdé", "wxyz", pexpect.EOF, pexpect.TIMEOUT])
         assert index == 0, (index, p.before)
-        index = p.expect(["1234", "abcdé", "wxyz", pexpect.EOF])
+        index = matcher(["1234", "abcdé", "wxyz", pexpect.EOF])
         assert index == 0, index
 
-    def _expect_echo_toggle_off(self, p: pexpect.spawn) -> None:
-        p.setecho(0)  # Turn off tty echo
+    def _expect_echo_toggle_off(self, p: pexpect.spawn[str], matcher: _Matcher) -> None:
+        p.setecho(state=False)  # Turn off tty echo
         p.waitnoecho()
         p.sendline("abcdé")  # Now, should only see this once.
         p.sendline("wxyz")  # Should also be only once.
-        patterns = [pexpect.EOF, pexpect.TIMEOUT, "abcdé", "wxyz", "1234"]
-        index = p.expect(patterns)
+        patterns: list[_Pattern] = [pexpect.EOF, pexpect.TIMEOUT, "abcdé", "wxyz", "1234"]
+        index = matcher(patterns)
         assert index == patterns.index("abcdé"), index
         patterns = [pexpect.EOF, "abcdé", "wxyz", "7890"]
-        index = p.expect(patterns)
+        index = matcher(patterns)
         assert index == patterns.index("wxyz"), index
 
-    def _expect_echo_toggle_on(self, p: pexpect.spawn) -> None:
-        p.setecho(1)  # Turn on tty echo
+    def _expect_echo_toggle_on(self, p: pexpect.spawn[str], matcher: _Matcher) -> None:
+        p.setecho(state=True)  # Turn on tty echo
         time.sleep(0.2)  # there is no waitecho() !
         p.sendline("7890")  # Should see this twice.
-        patterns = [pexpect.EOF, "abcdé", "wxyz", "7890"]
-        index = p.expect(patterns)
+        patterns: list[_Pattern] = [pexpect.EOF, "abcdé", "wxyz", "7890"]
+        index = matcher(patterns)
         assert index == patterns.index("7890"), index
-        index = p.expect(patterns)
+        index = matcher(patterns)
         assert index == patterns.index("7890"), index
         p.sendeof()
 

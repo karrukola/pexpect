@@ -1,16 +1,27 @@
 """Run a command to completion and collect everything it printed."""
 
+from __future__ import annotations
+
 import sys
 import types
-from collections.abc import Callable
-from typing import IO
+from typing import IO, TYPE_CHECKING, Literal, cast, overload
 
 from .exceptions import EOF, TIMEOUT
 from .pty_spawn import spawn
 
-_Pattern = str | bytes | type[EOF] | type[TIMEOUT]
-_Response = str | bytes | Callable[[dict[str, object]], object]
-_Events = dict[_Pattern, _Response] | list[tuple[_Pattern, _Response]]
+if TYPE_CHECKING:
+    from collections.abc import Callable
+
+    # The patterns are handed straight to expect(), so they are its own.
+    from .spawnbase import _Pattern
+
+    _Response = str | bytes | Callable[[dict[str, object]], object]
+    _Events = dict[_Pattern, _Response] | list[tuple[_Pattern, _Response]]
+
+
+# run() drives its child in bytes mode. The keyword set below cannot be
+# forwarded into the overloaded constructor, so the mode is stated once here.
+_spawn_bytes: Callable[..., spawn[bytes]] = spawn
 
 
 def _events_to_patterns(
@@ -25,6 +36,48 @@ def _events_to_patterns(
     return None, None
 
 
+@overload
+def run(
+    command: str | list[str],
+    timeout: float | None = 30,
+    withexitstatus: Literal[False] = False,
+    events: _Events | None = None,
+    extra_args: object = None,
+    logfile: IO[bytes] | IO[str] | None = None,
+    cwd: str | None = None,
+    env: dict[str, str] | None = None,
+    **kwargs: object,
+) -> bytes: ...
+
+
+@overload
+def run(
+    command: str | list[str],
+    timeout: float | None = 30,
+    withexitstatus: Literal[True] = ...,
+    events: _Events | None = None,
+    extra_args: object = None,
+    logfile: IO[bytes] | IO[str] | None = None,
+    cwd: str | None = None,
+    env: dict[str, str] | None = None,
+    **kwargs: object,
+) -> tuple[bytes, int | None]: ...
+
+
+@overload
+def run(
+    command: str | list[str],
+    timeout: float | None = 30,
+    withexitstatus: bool = ...,
+    events: _Events | None = None,
+    extra_args: object = None,
+    logfile: IO[bytes] | IO[str] | None = None,
+    cwd: str | None = None,
+    env: dict[str, str] | None = None,
+    **kwargs: object,
+) -> bytes | tuple[bytes, int | None]: ...
+
+
 def run(
     command: str | list[str],
     timeout: float | None = 30,
@@ -35,7 +88,7 @@ def run(
     cwd: str | None = None,
     env: dict[str, str] | None = None,
     **kwargs: object,
-) -> str | bytes | tuple[str | bytes, int | None]:
+) -> bytes | tuple[bytes, int | None]:
     r"""Run the given command, wait for it to finish, and return all its output.
 
     STDERR is included in output. If the full path to the command is not given
@@ -136,27 +189,34 @@ def run(
     encoding and decoding are handled.
     """
     if timeout == -1:
-        child = spawn(command, maxread=2000, logfile=logfile, cwd=cwd, env=env, **kwargs)
+        child = _spawn_bytes(command, maxread=2000, logfile=logfile, cwd=cwd, env=env, **kwargs)
     else:
-        child = spawn(
+        child = _spawn_bytes(
             command, timeout=timeout, maxread=2000, logfile=logfile, cwd=cwd, env=env, **kwargs
         )
     patterns, responses = _events_to_patterns(events)
-    child_result_list = []
+    child_result_list: list[bytes] = []
     event_count = 0
     while True:
         try:
             index = child.expect(patterns)
+            # allowed_string_types is not a literal tuple of types, so none of
+            # the isinstance() checks below narrow anything for the type
+            # checker; the searcher only ever leaves the child's own string
+            # type behind, which is what the casts say.
             if isinstance(child.after, child.allowed_string_types):
-                child_result_list.append(child.before + child.after)
+                child_result_list.append(cast("bytes", child.before) + cast("bytes", child.after))
             else:
                 # child.after may have been a TIMEOUT or EOF,
                 # which we don't want appended to the list.
-                child_result_list.append(child.before)
-            if isinstance(responses[index], child.allowed_string_types):
-                child.send(responses[index])
-            elif isinstance(responses[index], (types.FunctionType, types.MethodType)):
-                callback_result = responses[index](locals())
+                child_result_list.append(cast("bytes", child.before))
+            # responses is None only when patterns is, and an empty pattern
+            # list can only ever end in the EOF or TIMEOUT branch below.
+            response = cast("list[_Response]", responses)[index]
+            if isinstance(response, child.allowed_string_types):
+                child.send(cast("bytes", response))
+            elif isinstance(response, (types.FunctionType, types.MethodType)):
+                callback_result = response(locals())
                 sys.stdout.flush()
                 if isinstance(callback_result, child.allowed_string_types):
                     child.send(callback_result)
@@ -165,18 +225,60 @@ def run(
             else:
                 msg = (
                     f"parameter `event' at index {index} must be "
-                    f"a string, method, or function: {responses[index]!r}"
+                    f"a string, method, or function: {response!r}"
                 )
                 raise TypeError(msg)
             event_count = event_count + 1
         except (TIMEOUT, EOF):
-            child_result_list.append(child.before)
+            child_result_list.append(cast("bytes", child.before))
             break
     child_result = child.string_type().join(child_result_list)
     if withexitstatus:
         child.close()
         return (child_result, child.exitstatus)
     return child_result
+
+
+@overload
+def runu(
+    command: str | list[str],
+    timeout: float | None = 30,
+    withexitstatus: Literal[False] = False,
+    events: _Events | None = None,
+    extra_args: object = None,
+    logfile: IO[bytes] | IO[str] | None = None,
+    cwd: str | None = None,
+    env: dict[str, str] | None = None,
+    **kwargs: object,
+) -> str: ...
+
+
+@overload
+def runu(
+    command: str | list[str],
+    timeout: float | None = 30,
+    withexitstatus: Literal[True] = ...,
+    events: _Events | None = None,
+    extra_args: object = None,
+    logfile: IO[bytes] | IO[str] | None = None,
+    cwd: str | None = None,
+    env: dict[str, str] | None = None,
+    **kwargs: object,
+) -> tuple[str, int | None]: ...
+
+
+@overload
+def runu(
+    command: str | list[str],
+    timeout: float | None = 30,
+    withexitstatus: bool = ...,
+    events: _Events | None = None,
+    extra_args: object = None,
+    logfile: IO[bytes] | IO[str] | None = None,
+    cwd: str | None = None,
+    env: dict[str, str] | None = None,
+    **kwargs: object,
+) -> str | tuple[str, int | None]: ...
 
 
 def runu(
@@ -189,17 +291,22 @@ def runu(
     cwd: str | None = None,
     env: dict[str, str] | None = None,
     **kwargs: object,
-) -> str | bytes | tuple[str | bytes, int | None]:
+) -> str | tuple[str, int | None]:
     """Run a command in unicode mode; deprecated, pass *encoding* to run() instead."""
     kwargs.setdefault("encoding", "utf-8")
-    return run(
-        command,
-        timeout=timeout,
-        withexitstatus=withexitstatus,
-        events=events,
-        extra_args=extra_args,
-        logfile=logfile,
-        cwd=cwd,
-        env=env,
-        **kwargs,
+    # run() is stated in its bytes mode; the encoding just set puts the child
+    # in text mode, so the same shape comes back in its str flavour.
+    return cast(
+        "str | tuple[str, int | None]",
+        run(
+            command,
+            timeout=timeout,
+            withexitstatus=withexitstatus,
+            events=events,
+            extra_args=extra_args,
+            logfile=logfile,
+            cwd=cwd,
+            env=env,
+            **kwargs,
+        ),
     )

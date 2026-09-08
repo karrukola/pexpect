@@ -22,14 +22,19 @@ import signal
 import sys
 import unittest
 from pathlib import Path
+from typing import TYPE_CHECKING
+from unittest import IsolatedAsyncioTestCase
 
-try:
-    from unittest import IsolatedAsyncioTestCase
-except ImportError:
-    from aiounittest import AsyncTestCase as IsolatedAsyncioTestCase
+if TYPE_CHECKING:
+    # The mixin below is only ever combined with a TestCase, and it calls back
+    # into one (self.id(), unittest.TestCase.setUp). Saying so for the type
+    # checker keeps the runtime bases exactly as they were.
+    _MixinBase = unittest.TestCase
+else:
+    _MixinBase = object
 
 
-class _PexpectTestCaseBase:
+class _PexpectTestCaseBase(_MixinBase):
     def setUp(self) -> None:
         self.PYTHONBIN = sys.executable
         self.original_path = Path.cwd()

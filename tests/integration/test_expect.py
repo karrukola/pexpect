@@ -5,13 +5,24 @@ walk five statements through one. That is above the suite's time budget before
 pexpect does anything, so they live here.
 """
 
+from __future__ import annotations
+
 import unittest
-from collections.abc import Callable
+from typing import TYPE_CHECKING
 
 import pytest
 
 import pexpect
 from tests import pexpect_test_case
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
+
+    from pexpect.spawnbase import _Pattern
+
+    # The bound expect() or expect_exact() method of a spawn, as the helpers
+    # below call it: one pattern or a list of them in, the matching index out.
+    _Matcher = Callable[[_Pattern | list[_Pattern]], int]
 
 pytestmark = pytest.mark.usefixtures("fast_sleep", "lean_child_env")
 
@@ -19,7 +30,7 @@ pytestmark = pytest.mark.usefixtures("fast_sleep", "lean_child_env")
 class ExpectTestCase(pexpect_test_case.PexpectTestCase):
     """Tests for which of several overlapping patterns expect() returns."""
 
-    def _greed(self, expect: Callable[[list[bytes]], int]) -> None:
+    def _greed(self, expect: _Matcher) -> None:
         # End at the same point: the one with the earliest start should win
         assert expect([b"3, 4", b"2, 3, 4"]) == 1
 
@@ -29,7 +40,7 @@ class ExpectTestCase(pexpect_test_case.PexpectTestCase):
         # Same pattern passed twice: first instance wins
         assert expect([b"7, 8", b"7, 8, 9", b"7, 8"]) == 0
 
-    def _greed_read1(self, expect: Callable[[list[bytes]], int]) -> None:
+    def _greed_read1(self, expect: _Matcher) -> None:
         # Here, one has an earlier start and a later end. When processing
         # one character at a time, the one that finishes first should win,
         # because we don't know about the other match when it wins.
@@ -53,31 +64,31 @@ class ExpectTestCase(pexpect_test_case.PexpectTestCase):
         p = pexpect.spawn(self.PYTHONBIN + " list100.py", maxread=1)
         self._greed_read1(p.expect_exact)
 
-    def _ordering(self, p: pexpect.spawn) -> None:
+    def _ordering(self, p: pexpect.spawn[bytes], expect: _Matcher) -> None:
         p.timeout = 20
         # Five sendlines, each of which the REPL answers before the next one is
         # sent, so the send delay only paces what expect() already paces.
         p.delaybeforesend = None
-        p.expect(b">>> ")
+        expect(b">>> ")
 
         p.sendline("list(range(4*3))")
-        assert p.expect([b"5,", b"5,"]) == 0
-        p.expect(b">>> ")
+        assert expect([b"5,", b"5,"]) == 0
+        expect(b">>> ")
 
         p.sendline(b"list(range(4*3))")
-        assert p.expect([b"7,", b"5,"]) == 1
-        p.expect(b">>> ")
+        assert expect([b"7,", b"5,"]) == 1
+        expect(b">>> ")
 
         p.sendline(b"list(range(4*3))")
-        assert p.expect([b"5,", b"7,"]) == 0
-        p.expect(b">>> ")
+        assert expect([b"5,", b"7,"]) == 0
+        expect(b">>> ")
 
         p.sendline(b"list(range(4*5))")
-        assert p.expect([b"2,", b"12,"]) == 0
-        p.expect(b">>> ")
+        assert expect([b"2,", b"12,"]) == 0
+        expect(b">>> ")
 
         p.sendline(b"list(range(4*5))")
-        assert p.expect([b"12,", b"2,"]) == 1
+        assert expect([b"12,", b"2,"]) == 1
 
     def test_ordering(self) -> None:
         """Check which pattern expect() returns when many may eventually match.
@@ -86,7 +97,7 @@ class ExpectTestCase(pexpect_test_case.PexpectTestCase):
         passes with pexpect 2.1.
         """
         p = pexpect.spawn(self.PYTHONBIN)
-        self._ordering(p)
+        self._ordering(p, p.expect)
 
     def test_ordering_exact(self) -> None:
         """Check which pattern expect_exact() returns when many may match.
@@ -95,9 +106,8 @@ class ExpectTestCase(pexpect_test_case.PexpectTestCase):
         passes for the expect() method with pexpect 2.1.
         """
         p = pexpect.spawn(self.PYTHONBIN)
-        # mangle the spawn so we test expect_exact() instead
-        p.expect = p.expect_exact
-        self._ordering(p)
+        # drive the helper with expect_exact() instead
+        self._ordering(p, p.expect_exact)
 
 
 if __name__ == "__main__":

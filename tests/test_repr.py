@@ -1,5 +1,7 @@
 """Test __str__ methods."""
 
+from unittest import mock
+
 import pytest
 
 import pexpect
@@ -34,11 +36,13 @@ class TestCaseMisc(pexpect_test_case.PexpectTestCase):
         """Exercise derived spawn.__str__()."""
         # given,
         child = pexpect.spawn(None, None)
-        child.read_nonblocking = lambda _size, _timeout: b""
-        try:
-            child.expect("alpha", timeout=0.01)
-        except pexpect.TIMEOUT as e:
-            str(e)  # Smoketest
-        else:
-            msg = "TIMEOUT exception expected. No exception raised."
-            raise AssertionError(msg)
+        # There is no child to read from, so hand expect() nothing and let it
+        # reach the TIMEOUT whose __str__ is under test.
+        with mock.patch.object(child, "read_nonblocking", return_value=b""):
+            try:
+                child.expect("alpha", timeout=0.01)
+            except pexpect.TIMEOUT as e:
+                str(e)  # Smoketest
+            else:
+                msg = "TIMEOUT exception expected. No exception raised."
+                raise AssertionError(msg)

@@ -22,23 +22,55 @@ PEXPECT LICENSE
 
 """
 
+from __future__ import annotations
+
 import socket
-from collections.abc import Iterable, Iterator
 from contextlib import contextmanager
-from typing import IO
+from typing import IO, TYPE_CHECKING, AnyStr, cast, overload
 
 from .exceptions import EOF, TIMEOUT
 from .spawnbase import SpawnBase
 
+if TYPE_CHECKING:
+    from collections.abc import Iterable, Iterator
+
 __all__ = ["SocketSpawn"]
 
 
-class SocketSpawn(SpawnBase):
+class SocketSpawn(SpawnBase[AnyStr]):
     """Like :mod:`pexpect.fdpexpect`, but over the cross-platform socket api.
 
     Using the python socket api rather than the unix-specific file descriptor
     api means this works with remote connections on both unix and windows.
     """
+
+    @overload
+    def __init__(
+        self: SocketSpawn[bytes],
+        socket: socket.socket,
+        args: None = None,
+        timeout: float | None = 30,
+        maxread: int = 2000,
+        searchwindowsize: int | None = None,
+        logfile: IO[bytes] | IO[str] | None = None,
+        encoding: None = None,
+        codec_errors: str = "strict",
+        use_poll: bool = False,
+    ) -> None: ...
+
+    @overload
+    def __init__(
+        self: SocketSpawn[str],
+        socket: socket.socket,
+        args: None = None,
+        timeout: float | None = 30,
+        maxread: int = 2000,
+        searchwindowsize: int | None = None,
+        logfile: IO[bytes] | IO[str] | None = None,
+        encoding: str = ...,
+        codec_errors: str = "strict",
+        use_poll: bool = False,
+    ) -> None: ...
 
     def __init__(
         self,
@@ -92,17 +124,17 @@ class SocketSpawn(SpawnBase):
 
     def send(self, s: str | bytes) -> int:
         """Write to socket, return number of bytes written."""
-        s = self._coerce_send_string(s)
-        self._log(s, "send")
+        data = cast("AnyStr", self._coerce_send_string(s))
+        self._log(data, "send")
 
-        b = self._encoder.encode(s, final=False)
+        b = self._encoder.encode(data, final=False)
         self.socket.sendall(b)
         return len(b)
 
     def sendline(self, s: str | bytes) -> int:
         """Write to socket with trailing newline, return number of bytes written."""
-        s = self._coerce_send_string(s)
-        return self.send(s + self.linesep)
+        data = cast("AnyStr", self._coerce_send_string(s))
+        return self.send(data + self.linesep)
 
     def write(self, s: str | bytes) -> None:
         """Write to socket, return None."""
@@ -122,7 +154,7 @@ class SocketSpawn(SpawnBase):
         finally:
             self.socket.settimeout(saved_timeout)
 
-    def read_nonblocking(self, size: int = 1, timeout: float | None = -1) -> bytes:
+    def read_nonblocking(self, size: int = 1, timeout: float | None = -1) -> AnyStr:
         """Read from the file descriptor and return the result as a string.
 
         The read_nonblocking method of :class:`SpawnBase` assumes that a call
@@ -146,8 +178,6 @@ class SocketSpawn(SpawnBase):
                     self.flag_eof = True
                     msg = "Socket closed"
                     raise EOF(msg)
-                # A no-op in bytes mode, where the null coder returns the same
-                # bytes; in str mode this is what every other read path does.
                 return self._decoder.decode(s, final=False)
         except TimeoutError as err:
             msg = "Timeout exceeded."

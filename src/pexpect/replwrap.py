@@ -1,11 +1,17 @@
 """Generic wrapper for read-eval-print-loops, a.k.a. interactive shells."""
 
+from __future__ import annotations
+
 import signal
 import sys
-from collections.abc import Awaitable
 from pathlib import Path
+from typing import TYPE_CHECKING, Literal, cast, overload
 
 import pexpect
+
+if TYPE_CHECKING:
+    import re
+    from collections.abc import Awaitable
 
 PEXPECT_PROMPT = "[PEXPECT_PROMPT>"
 PEXPECT_CONTINUATION_PROMPT = "[PEXPECT_PROMPT+"
@@ -30,8 +36,8 @@ class REPLWrapper:
 
     def __init__(
         self,
-        cmd_or_spawn: str | pexpect.spawn,
-        orig_prompt: str,
+        cmd_or_spawn: str | pexpect.spawn[str],
+        orig_prompt: str | re.Pattern[str],
         prompt_change: str | None,
         new_prompt: str = PEXPECT_PROMPT,
         continuation_prompt: str = PEXPECT_CONTINUATION_PROMPT,
@@ -62,10 +68,31 @@ class REPLWrapper:
         if extra_init_cmd is not None:
             self.run_command(extra_init_cmd)
 
-    def set_prompt(self, orig_prompt: str, prompt_change: str) -> None:
+    def set_prompt(self, orig_prompt: str | re.Pattern[str], prompt_change: str) -> None:
         """Wait for ``orig_prompt``, then send the ``prompt_change`` command."""
         self.child.expect(orig_prompt)
         self.child.sendline(prompt_change)
+
+    @overload
+    def _expect_prompt(
+        self,
+        timeout: float | None = -1,
+        async_: Literal[False] = False,
+    ) -> int: ...
+
+    @overload
+    def _expect_prompt(
+        self,
+        timeout: float | None = -1,
+        async_: Literal[True] = ...,
+    ) -> Awaitable[int]: ...
+
+    @overload
+    def _expect_prompt(
+        self,
+        timeout: float | None = -1,
+        async_: bool = ...,
+    ) -> int | Awaitable[int]: ...
 
     def _expect_prompt(
         self,
@@ -75,6 +102,30 @@ class REPLWrapper:
         return self.child.expect_exact(
             [self.prompt, self.continuation_prompt], timeout=timeout, async_=async_
         )
+
+    @overload
+    def run_command(
+        self,
+        command: str,
+        timeout: float | None = -1,
+        async_: Literal[False] = False,
+    ) -> str: ...
+
+    @overload
+    def run_command(
+        self,
+        command: str,
+        timeout: float | None = -1,
+        async_: Literal[True] = ...,
+    ) -> Awaitable[str]: ...
+
+    @overload
+    def run_command(
+        self,
+        command: str,
+        timeout: float | None = -1,
+        async_: bool = ...,
+    ) -> str | Awaitable[str]: ...
 
     def run_command(
         self,
@@ -111,11 +162,13 @@ class REPLWrapper:
 
             return repl_run_command_async(self, cmdlines, timeout)
 
-        res = []
+        # Each _expect_prompt() below matched, so `before` holds the output
+        # the child sent ahead of that prompt.
+        res: list[str] = []
         self.child.sendline(cmdlines[0])
         for line in cmdlines[1:]:
             self._expect_prompt(timeout=timeout)
-            res.append(self.child.before)
+            res.append(cast("str", self.child.before))
             self.child.sendline(line)
 
         # Command was fully submitted, now wait for the next prompt
@@ -124,7 +177,7 @@ class REPLWrapper:
             self.child.kill(signal.SIGINT)
             self._expect_prompt(timeout=1)
             raise ValueError("Continuation prompt found - input was incomplete:\n" + command)
-        return "".join([*res, self.child.before])
+        return "".join([*res, cast("str", self.child.before)])
 
 
 def python(command: str = sys.executable) -> REPLWrapper:

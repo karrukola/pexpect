@@ -45,6 +45,13 @@ class TestCaseDestructor(pexpect_test_case.PexpectTestCase):
             return "SKIP"
         gc.collect()
         time.sleep(3)
+        # These get rebound to None further down, which is one of the two ways
+        # of dropping the reference that this test covers; `del` is the other.
+        p1: pexpect.spawn[bytes] | None
+        p2: pexpect.spawn[bytes] | None
+        p3: pexpect.spawn[bytes] | None
+        p4: pexpect.spawn[bytes] | None
+
         p1 = pexpect.spawn(f"{self.PYTHONBIN} hello_world.py")
         p2 = pexpect.spawn(f"{self.PYTHONBIN} hello_world.py")
         p3 = pexpect.spawn(f"{self.PYTHONBIN} hello_world.py")

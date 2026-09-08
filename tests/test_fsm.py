@@ -13,7 +13,7 @@ from pexpect import FSM
 def _run_main(expression: str) -> str:
     """Run :func:`FSM.main` on ``expression`` and return everything it printed."""
 
-    def _input(prompt: str) -> str:  # noqa: ARG001  # signature fixed by builtins.input
+    def _input(prompt: object = "") -> str:  # noqa: ARG001  # signature fixed by builtins.input
         return expression
 
     orig_input = builtins.input

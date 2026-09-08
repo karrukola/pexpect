@@ -18,7 +18,6 @@ OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 
 """
 
-import sys
 import unittest
 
 import pytest
@@ -78,8 +77,7 @@ class ExpTimeoutTestCase(pexpect_test_case.PexpectTestCase):
             p = pexpect.spawn("cat")
             p.sendline("Hello")
             p.expect("Goodbye", timeout=_TIMEOUT)
-        except pexpect.TIMEOUT:
-            err = sys.exc_info()[1]
+        except pexpect.TIMEOUT as err:
             if err.get_trace().count("pexpect/__init__.py") != 0:
                 self.fail(
                     "The TIMEOUT get_trace() referenced pexpect.py. "
@@ -96,8 +94,7 @@ class ExpTimeoutTestCase(pexpect_test_case.PexpectTestCase):
             p = pexpect.spawn("cat")
             p.sendline("Hello")
             nested_function(p)
-        except pexpect.TIMEOUT:
-            err = sys.exc_info()[1]
+        except pexpect.TIMEOUT as err:
             if err.get_trace().count("nested_function") == 0:
                 self.fail(
                     "The TIMEOUT get_trace() did not show the call "

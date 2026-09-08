@@ -1,5 +1,7 @@
 """Provides an interface like pexpect.spawn interface using subprocess.Popen."""
 
+from __future__ import annotations
+
 import os
 import shlex
 import signal
@@ -7,21 +9,84 @@ import subprocess
 import sys
 import threading
 import time
-from collections.abc import Callable, Iterable
 from queue import Empty, Queue
-from typing import IO
+from typing import IO, TYPE_CHECKING, AnyStr, TypedDict, cast, overload
 
 from .exceptions import EOF
 from .spawnbase import SpawnBase
 
+if TYPE_CHECKING:
+    from collections.abc import Callable, Iterable
 
-class PopenSpawn(SpawnBase):
+
+class _PopenKwargs(TypedDict, total=False):
+    """The keyword arguments PopenSpawn hands to :class:`subprocess.Popen`.
+
+    Collecting them in a mapping is what lets the Windows-only ones be added
+    conditionally; stating their types here is what lets the call still pick
+    the bytes flavour of Popen, which is the one this class reads from.
+    """
+
+    bufsize: int
+    stdin: int
+    stderr: int
+    stdout: int
+    cwd: str | None
+    preexec_fn: Callable[[], None] | None
+    env: dict[str, str] | None
+    # STARTUPINFO only exists on Windows, where the block that sets this key
+    # is the only one that reads it.
+    startupinfo: object
+    creationflags: int
+
+
+class PopenSpawn(SpawnBase[AnyStr]):
     """Talk to a child process started with :class:`subprocess.Popen`.
 
     Unlike :class:`pexpect.spawn` no pseudo-terminal is allocated, so this
     works on platforms without ptys at the cost of the child seeing a pipe
     rather than a terminal.
     """
+
+    # The child. Popen types both of its pipes as optional, because whether
+    # they exist depends on its arguments, and this class always asks for both.
+    # It reads them as bytes whatever this spawn's own encoding is: the decoding
+    # to the caller's string type happens in read_nonblocking().
+    proc: subprocess.Popen[bytes]
+
+    # What the reader thread has handed over but read_nonblocking() has not
+    # handed out yet, in the string type this spawn was created for.
+    _buf: AnyStr
+
+    @overload
+    def __init__(
+        self: PopenSpawn[bytes],
+        cmd: str | list[str],
+        timeout: float | None = 30,
+        maxread: int = 2000,
+        searchwindowsize: int | None = None,
+        logfile: IO[bytes] | IO[str] | None = None,
+        cwd: str | None = None,
+        env: dict[str, str] | None = None,
+        encoding: None = None,
+        codec_errors: str = "strict",
+        preexec_fn: Callable[[], None] | None = None,
+    ) -> None: ...
+
+    @overload
+    def __init__(
+        self: PopenSpawn[str],
+        cmd: str | list[str],
+        timeout: float | None = 30,
+        maxread: int = 2000,
+        searchwindowsize: int | None = None,
+        logfile: IO[bytes] | IO[str] | None = None,
+        cwd: str | None = None,
+        env: dict[str, str] | None = None,
+        encoding: str = ...,
+        codec_errors: str = "strict",
+        preexec_fn: Callable[[], None] | None = None,
+    ) -> None: ...
 
     def __init__(
         self,
@@ -54,11 +119,11 @@ class PopenSpawn(SpawnBase):
         # application outputs by default and `popen` doesn't translate
         # anything.
         if encoding is None:
-            self.crlf = os.linesep.encode("ascii")
+            self.crlf = cast("AnyStr", os.linesep.encode("ascii"))
         else:
-            self.crlf = self.string_type(os.linesep)
+            self.crlf = cast("AnyStr", os.linesep)
 
-        kwargs = {
+        kwargs: _PopenKwargs = {
             "bufsize": 0,
             "stdin": subprocess.PIPE,
             "stderr": subprocess.STDOUT,
@@ -83,14 +148,15 @@ class PopenSpawn(SpawnBase):
         self.closed = False
         self._buf = self.string_type()
 
-        self._read_queue = Queue()
+        # None is the sentinel the reader thread queues at the end of the output.
+        self._read_queue: Queue[bytes | None] = Queue()
         self._read_thread = threading.Thread(target=self._read_incoming)
         self._read_thread.daemon = True
         self._read_thread.start()
 
     _read_reached_eof = False
 
-    def read_nonblocking(self, size: int, timeout: float | None) -> str | bytes:
+    def read_nonblocking(self, size: int = 1, timeout: float | None = None) -> AnyStr:
         """Return up to *size* characters already read by the reader thread.
 
         Raises :exc:`EOF` once the queue is drained and the child's output
@@ -109,8 +175,6 @@ class PopenSpawn(SpawnBase):
 
         if timeout == -1:
             timeout = self.timeout
-        # Not elif: the branch above is exactly what leaves a None here, when
-        # the spawn was built with timeout=None.
         if timeout is None:
             timeout = 1e6
 
@@ -135,16 +199,15 @@ class PopenSpawn(SpawnBase):
 
     def _read_incoming(self) -> None:
         """Run in a thread to move output from a pipe to a queue."""
-        fileno = self.proc.stdout.fileno()
+        fileno = cast("IO[bytes]", self.proc.stdout).fileno()
         while 1:
             buf = b""
             try:
                 buf = os.read(fileno, 1024)
-            except OSError as e:
-                # _log() hands its argument straight to the log streams, so an
-                # exception object raises TypeError inside this thread, killing
-                # it before it can queue the EOF sentinel below.
-                message = str(e)
+            except OSError as err:
+                # The log takes the string type this spawn was created for, so
+                # the error is reported in that type rather than as the object.
+                message = str(err)
                 self._log(message.encode("utf-8") if self.encoding is None else message, "read")
 
             if not buf:
@@ -173,11 +236,11 @@ class PopenSpawn(SpawnBase):
 
         Returns the number of bytes written.
         """
-        s = self._coerce_send_string(s)
-        self._log(s, "send")
+        data = cast("AnyStr", self._coerce_send_string(s))
+        self._log(data, "send")
 
-        b = self._encoder.encode(s, final=False)
-        return self.proc.stdin.write(b)
+        b = self._encoder.encode(data, final=False)
+        return cast("IO[bytes]", self.proc.stdin).write(b)
 
     def sendline(self, s: str | bytes = "") -> int:
         """Send string ``s`` to the child, with os.linesep appended.
@@ -219,4 +282,4 @@ class PopenSpawn(SpawnBase):
 
     def sendeof(self) -> None:
         """Close the stdin pipe from the writing end."""
-        self.proc.stdin.close()
+        cast("IO[bytes]", self.proc.stdin).close()

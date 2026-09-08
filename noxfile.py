@@ -16,6 +16,7 @@ nox.options.default_venv_backend = "uv"
 
 
 _REPO_ROOT = Path(__file__).parent
+_SRC_ROOT = _REPO_ROOT / "src"
 _TESTS_ROOT = _REPO_ROOT / "tests"
 _PYTHON_VERSIONS = [
     "3.10",
@@ -42,6 +43,7 @@ def lint(session: nox.Session) -> None:
     _install_deps(session)
     session.run("ruff", "format", "--check", _REPO_ROOT)
     session.run("ruff", "check", _REPO_ROOT)
+    session.run("mypy", "--junit-xml", "reports/mypy.xml", _SRC_ROOT, _TESTS_ROOT)
 
 
 @nox.session

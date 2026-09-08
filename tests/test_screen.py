@@ -160,7 +160,8 @@ class ScreenTestCase(pexpect_test_case.PexpectTestCase):
         row = col = 5
         s = self.make_screen_with_put()
         s.cursor_home(row, col)
-        c = s.get()
+        s.get()  # get() returns nothing; get_abs() is what reads a character back
+        c = s.get_abs(row, col)
         s.cursor_save()
         s.cursor_home()
         s.cursor_forward()
@@ -168,7 +169,7 @@ class ScreenTestCase(pexpect_test_case.PexpectTestCase):
         s.cursor_unsave()
         assert s.cur_r == row
         assert s.cur_c == col
-        assert c == s.get()
+        assert c == s.get_abs(s.cur_r, s.cur_c)
 
     def test_scroll(self) -> None:
         """Scroll a range of rows down and then up within the screen."""
@@ -215,28 +216,32 @@ class ScreenTestCase(pexpect_test_case.PexpectTestCase):
         assert str(s) == insert_target
 
     def make_screen_with_box_unicode(
-        self, *args: str | None, **kwargs: str | None
+        self, encoding: str, encoding_errors: str = "replace"
     ) -> screen.screen:
         """Return a screen holding a double-line box fed in as unicode."""
-        s = screen.screen(2, 2, *args, **kwargs)
+        s = screen.screen(2, 2, encoding, encoding_errors)
         s.put_abs(1, 1, "\u2554")
         s.put_abs(1, 2, "\u2557")
         s.put_abs(2, 1, "\u255a")
         s.put_abs(2, 2, "\u255d")
         return s
 
-    def make_screen_with_box_cp437(self, *args: str | None, **kwargs: str | None) -> screen.screen:
+    def make_screen_with_box_cp437(
+        self, encoding: str, encoding_errors: str = "replace"
+    ) -> screen.screen:
         """Return a screen holding a double-line box fed in as CP437 bytes."""
-        s = screen.screen(2, 2, *args, **kwargs)
+        s = screen.screen(2, 2, encoding, encoding_errors)
         s.put_abs(1, 1, b"\xc9")
         s.put_abs(1, 2, b"\xbb")
         s.put_abs(2, 1, b"\xc8")
         s.put_abs(2, 2, b"\xbc")
         return s
 
-    def make_screen_with_box_utf8(self, *args: str | None, **kwargs: str | None) -> screen.screen:
+    def make_screen_with_box_utf8(
+        self, encoding: str, encoding_errors: str = "replace"
+    ) -> screen.screen:
         """Return a screen holding a double-line box fed in as UTF-8 bytes."""
-        s = screen.screen(2, 2, *args, **kwargs)
+        s = screen.screen(2, 2, encoding, encoding_errors)
         s.put_abs(1, 1, b"\xe2\x95\x94")
         s.put_abs(1, 2, b"\xe2\x95\x97")
         s.put_abs(2, 1, b"\xe2\x95\x9a")

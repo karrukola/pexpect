@@ -66,6 +66,8 @@ class PxsshTestCase(SSHTestBase):
         confirmation_strings = 0
         confirmation_array = ["-R 2525:localhost:22", "-L 2424:localhost:22", "-D 8888"]
         string = ssh.login("server", "me", password=FAKE_PW, ssh_tunnels=tunnels)
+        # debug_command_string=True makes login() return the ssh command line it built.
+        assert isinstance(string, str)
         for confirmation in confirmation_array:
             if confirmation in string:
                 confirmation_strings += 1
@@ -87,6 +89,7 @@ class PxsshTestCase(SSHTestBase):
         string = ssh.login(
             "server", "me", password=FAKE_PW, ssh_tunnels=tunnels, spawn_local_ssh=False
         )
+        assert isinstance(string, str)
         for confirmation in confirmation_array:
             if confirmation in string:
                 confirmation_strings += 1
@@ -103,6 +106,7 @@ class PxsshTestCase(SSHTestBase):
             string = ssh.login(
                 "server", "me", password=FAKE_PW, spawn_local_ssh=False, ssh_config=config_path
             )
+            assert isinstance(string, str)
         if "-F " + config_path not in string:
             msg = "String generated from SSH config passing is incorrect."
             raise AssertionError(msg)
@@ -207,7 +211,7 @@ class PxsshTestCase(SSHTestBase):
         Then no exception is raised.
         """
         ssh = pxssh.pxssh()
-        assert ssh._check_login_response(pxssh._MATCH_TIMEOUT) is None
+        ssh._check_login_response(pxssh._MATCH_TIMEOUT)
 
     def test_try_read_prompt_stops_at_its_total_timeout(self) -> None:
         """Stop reading the prompt once the whole time budget is used up.
@@ -273,6 +277,7 @@ class PxsshTestCase(SSHTestBase):
             check_local_ip=False,
         )
 
+        assert isinstance(string, str)
         assert "-o 'StrictHostKeyChecking=no'" in string
         assert " -q" not in string
         assert "NoHostAuthenticationForLocalhost=yes" in string
@@ -321,6 +326,7 @@ class PxsshTestCase(SSHTestBase):
         confirmation_strings = 0
         confirmation_array = [" -A"]
         string = ssh.login("server", "me", password=FAKE_PW, ssh_key=True)
+        assert isinstance(string, str)
         for confirmation in confirmation_array:
             if confirmation in string:
                 confirmation_strings += 1
@@ -334,6 +340,7 @@ class PxsshTestCase(SSHTestBase):
             ssh_key = temp_file.name
             confirmation_array = [" -i " + ssh_key]
             string = ssh.login("server", "me", password=FAKE_PW, ssh_key=ssh_key)
+            assert isinstance(string, str)
         for confirmation in confirmation_array:
             if confirmation in string:
                 confirmation_strings += 1
@@ -353,6 +360,7 @@ class PxsshTestCase(SSHTestBase):
         confirmation_strings = 0
         confirmation_array = [cipher_string, "-2"]
         string = ssh.login("server", "me", password=FAKE_PW, cmd="ssh " + cipher_string + " -2")
+        assert isinstance(string, str)
         for confirmation in confirmation_array:
             if confirmation in string:
                 confirmation_strings += 1
@@ -368,6 +376,7 @@ class PxsshTestCase(SSHTestBase):
         confirmation_strings = 0
         confirmation_array = [cipher_string, "-2"]
         string = ssh.login("server", "me", password=FAKE_PW, cmd="ssh " + cipher_string + " -2")
+        assert isinstance(string, str)
         for confirmation in confirmation_array:
             if confirmation in string:
                 confirmation_strings += 1

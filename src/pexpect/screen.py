@@ -94,6 +94,7 @@ class screen:
         self.cols = c
         self.encoding = encoding
         self.encoding_errors = encoding_errors
+        self.decoder: codecs.IncrementalDecoder | None
         if encoding is not None:
             self.decoder = codecs.getincrementaldecoder(encoding)(encoding_errors)
         else:

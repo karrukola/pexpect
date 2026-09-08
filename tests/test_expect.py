@@ -18,13 +18,15 @@ OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 
 """
 
+from __future__ import annotations
+
 import multiprocessing
 import re
 import signal
 import subprocess
 import sys
 import unittest
-from types import FrameType
+from typing import TYPE_CHECKING, Protocol, cast
 
 import pytest
 
@@ -33,15 +35,32 @@ import pexpect
 from . import pexpect_test_case
 from .utils import no_coverage_env
 
+if TYPE_CHECKING:
+    from multiprocessing.context import BaseContext
+    from multiprocessing.process import BaseProcess
+    from types import FrameType
+
+    from pexpect.spawnbase import _Pattern
+
 pytestmark = pytest.mark.usefixtures("fast_sleep", "killed_pty_children")
 
 # Python 3.14 changed the non-macOS POSIX default to forkserver
 # but the code in this module does not work with it
 # See https://github.com/python/cpython/issues/125714
+mp_context: BaseContext
 if multiprocessing.get_start_method() == "forkserver":
     mp_context = multiprocessing.get_context(method="fork")
 else:
     mp_context = multiprocessing.get_context()
+
+if TYPE_CHECKING:
+    # A base class has to be a static name, and mp_context.Process is an
+    # attribute of a value. Every context's Process is a BaseProcess subclass
+    # differing only in how the child is started, so that is what the two
+    # subclasses below are checked against.
+    _Process = BaseProcess
+else:
+    _Process = mp_context.Process
 
 # Many of these test cases blindly assume that sequential directory
 # listings of the /bin directory will yield the same results.
@@ -80,6 +99,17 @@ def hex_diff(left: bytes, right: bytes) -> str:
     return "\n" + "\n".join(
         diff,
     )
+
+
+class _Matcher(Protocol):
+    """The bound expect() or expect_exact() method of a spawn.
+
+    The paired tests below share one helper each and hand it the matcher its
+    name claims, rather than substituting one method for the other.
+    """
+
+    def __call__(self, pattern: _Pattern | list[_Pattern], /, timeout: float | None = ...) -> int:
+        """Match one pattern, or the first of a list, and return its index."""
 
 
 class ExpectTestCase(pexpect_test_case.PexpectTestCase):
@@ -181,45 +211,44 @@ class ExpectTestCase(pexpect_test_case.PexpectTestCase):
         ... agreed! -jquast, the buffer ptr isn't forwarded on match, see first two test cases
         """
         p = pexpect.spawn("cat", echo=False, timeout=5)
-        self._expect_order(p)
+        self._expect_order(p, p.expect)
 
     def test_expect_order_exact(self) -> None:
         """Like test_expect_order(), but using expect_exact()."""
         p = pexpect.spawn("cat", echo=False, timeout=5)
-        p.expect = p.expect_exact
-        self._expect_order(p)
+        self._expect_order(p, p.expect_exact)
 
-    def _expect_order(self, p: pexpect.spawn) -> None:
+    def _expect_order(self, p: pexpect.spawn[bytes], expect: _Matcher) -> None:
         p.sendline(b"1234")
         p.sendline(b"abcd")
         p.sendline(b"wxyz")
         p.sendline(b"7890")
         p.sendeof()
-        patterns = [b"1234", b"abcd", b"wxyz", pexpect.EOF, b"7890"]
-        index = p.expect(patterns)
+        patterns: list[_Pattern] = [b"1234", b"abcd", b"wxyz", pexpect.EOF, b"7890"]
+        index = expect(patterns)
         assert patterns[index] == b"1234", (index, p.before, p.after)
 
         # The buffer pointer is not forwarded on a match, so the same
         # pattern_list matches 'abcd' first and only then 'wxyz'.
         patterns = [b"54321", pexpect.TIMEOUT, b"1234", b"abcd", b"wxyz", pexpect.EOF]
-        index = p.expect(patterns, timeout=5)
+        index = expect(patterns, timeout=5)
         assert patterns[index] == b"abcd", (index, p.before, p.after)
-        index = p.expect(patterns, timeout=5)
+        index = expect(patterns, timeout=5)
         assert patterns[index] == b"wxyz", (index, p.before, p.after)
 
         patterns = [pexpect.EOF, b"abcd", b"wxyz", b"7890"]
-        index = p.expect(patterns)
+        index = expect(patterns)
         assert patterns[index] == b"7890", (index, p.before, p.after)
 
         patterns = [b"abcd", b"wxyz", b"7890", pexpect.EOF]
-        index = p.expect(patterns)
+        index = expect(patterns)
         assert patterns[index] == pexpect.EOF, (index, p.before, p.after)
 
     def test_expect_setecho_off(self) -> None:
         """Toggle tty echo off half way through a session and keep matching."""
         p = pexpect.spawn("cat", echo=True, timeout=5)
         try:
-            self._expect_echo_toggle(p)
+            self._expect_echo_toggle(p, p.expect)
         except OSError:
             if sys.platform.lower().startswith("sunos"):
                 msg = "Not supported on this platform."
@@ -229,9 +258,8 @@ class ExpectTestCase(pexpect_test_case.PexpectTestCase):
     def test_expect_setecho_off_exact(self) -> None:
         """Like test_expect_setecho_off(), but using expect_exact()."""
         p = pexpect.spawn("cat", echo=True, timeout=5)
-        p.expect = p.expect_exact
         try:
-            self._expect_echo_toggle(p)
+            self._expect_echo_toggle(p, p.expect_exact)
         except OSError:
             if sys.platform.lower().startswith("sunos"):
                 msg = "Not supported on this platform."
@@ -253,74 +281,72 @@ class ExpectTestCase(pexpect_test_case.PexpectTestCase):
     def test_expect_echo(self) -> None:
         """Match input twice over, because tty echo is on by default."""
         p = pexpect.spawn("cat", echo=True, timeout=5)
-        self._expect_echo(p)
+        self._expect_echo(p, p.expect)
 
     def test_expect_echo_exact(self) -> None:
         """Like test_expect_echo(), but using expect_exact()."""
         p = pexpect.spawn("cat", echo=True, timeout=5)
-        p.expect = p.expect_exact
-        self._expect_echo(p)
+        self._expect_echo(p, p.expect_exact)
 
-    def _expect_echo(self, p: pexpect.spawn) -> None:
+    def _expect_echo(self, p: pexpect.spawn[bytes], expect: _Matcher) -> None:
         p.sendline(b"1234")  # Should see this twice (once from tty echo and again from cat).
-        index = p.expect([b"1234", b"abcd", b"wxyz", pexpect.EOF, pexpect.TIMEOUT])
-        assert index == 0, "index=" + str(index) + "\n" + p.before
-        index = p.expect([b"1234", b"abcd", b"wxyz", pexpect.EOF])
+        index = expect([b"1234", b"abcd", b"wxyz", pexpect.EOF, pexpect.TIMEOUT])
+        assert index == 0, f"index={index}\n{p.before!r}"
+        index = expect([b"1234", b"abcd", b"wxyz", pexpect.EOF])
         assert index == 0, "index=" + str(index)
 
-    def _expect_echo_toggle(self, p: pexpect.spawn) -> None:
+    def _expect_echo_toggle(self, p: pexpect.spawn[bytes], expect: _Matcher) -> None:
         p.sendline(b"1234")  # Should see this twice (once from tty echo and again from cat).
-        index = p.expect([b"1234", b"abcd", b"wxyz", pexpect.EOF, pexpect.TIMEOUT])
-        assert index == 0, "index=" + str(index) + "\n" + p.before
-        index = p.expect([b"1234", b"abcd", b"wxyz", pexpect.EOF])
+        index = expect([b"1234", b"abcd", b"wxyz", pexpect.EOF, pexpect.TIMEOUT])
+        assert index == 0, f"index={index}\n{p.before!r}"
+        index = expect([b"1234", b"abcd", b"wxyz", pexpect.EOF])
         assert index == 0, "index=" + str(index)
-        p.setecho(0)  # Turn off tty echo
+        p.setecho(state=False)  # Turn off tty echo
         p.waitnoecho()
         p.sendline(b"abcd")  # Now, should only see this once.
         p.sendline(b"wxyz")  # Should also be only once.
-        patterns = [pexpect.EOF, pexpect.TIMEOUT, b"abcd", b"wxyz", b"1234"]
-        index = p.expect(patterns)
+        patterns: list[_Pattern] = [pexpect.EOF, pexpect.TIMEOUT, b"abcd", b"wxyz", b"1234"]
+        index = expect(patterns)
         assert patterns[index] == b"abcd", "index=" + str(index)
         patterns = [pexpect.EOF, b"abcd", b"wxyz", b"7890"]
-        index = p.expect(patterns)
+        index = expect(patterns)
         assert patterns[index] == b"wxyz", "index=" + str(index)
-        p.setecho(1)  # Turn on tty echo
+        p.setecho(state=True)  # Turn on tty echo
         p.sendline(b"7890")  # Should see this twice.
-        index = p.expect(patterns)
+        index = expect(patterns)
         assert patterns[index] == b"7890", "index=" + str(index)
-        index = p.expect(patterns)
+        index = expect(patterns)
         assert patterns[index] == b"7890", "index=" + str(index)
         p.sendeof()
 
     def test_expect_index(self) -> None:
         """Return the correct index for a mixed list of regexes, TIMEOUT and EOF."""
         p = pexpect.spawn("cat", echo=False, timeout=5)
-        self._expect_index(p)
+        self._expect_index(p, p.expect)
 
     def test_expect_index_exact(self) -> None:
         """Like test_expect_index(), but using expect_exact()."""
         p = pexpect.spawn("cat", echo=False, timeout=5)
-        p.expect = p.expect_exact
-        self._expect_index(p)
+        self._expect_index(p, p.expect_exact)
 
-    def _expect_index(self, p: pexpect.spawn) -> None:
+    def _expect_index(self, p: pexpect.spawn[bytes], expect: _Matcher) -> None:
         p.sendline(b"1234")
-        patterns = [b"abcd", b"wxyz", b"1234", pexpect.EOF]
-        index = p.expect(patterns)
+        patterns: list[_Pattern] = [b"abcd", b"wxyz", b"1234", pexpect.EOF]
+        index = expect(patterns)
         assert patterns[index] == b"1234", "index=" + str(index)
         p.sendline(b"abcd")
         patterns = [pexpect.TIMEOUT, b"abcd", b"wxyz", b"1234", pexpect.EOF]
-        index = p.expect(patterns)
+        index = expect(patterns)
         assert patterns[index] == b"abcd", "index=" + str(index) + str(p)
         p.sendline(b"wxyz")
         patterns = [b"54321", pexpect.TIMEOUT, b"abcd", b"wxyz", b"1234", pexpect.EOF]
-        index = p.expect(patterns)
+        index = expect(patterns)
         assert patterns[index] == b"wxyz", "index=" + str(index)
         p.sendline(b"$*!@?")
-        index = p.expect(patterns, timeout=0.01)
+        index = expect(patterns, timeout=0.01)
         assert patterns[index] == pexpect.TIMEOUT, "index=" + str(index)
         p.sendeof()
-        index = p.expect(patterns)
+        index = expect(patterns)
         assert patterns[index] == pexpect.EOF, "index=" + str(index)
 
     def test_expect(self) -> None:
@@ -337,6 +363,7 @@ class ExpectTestCase(pexpect_test_case.PexpectTestCase):
         the_new_way = b""
         while 1:
             i = p.expect([b"\n", pexpect.EOF])
+            assert isinstance(p.before, bytes)
             the_new_way = the_new_way + p.before
             if i == 1:
                 break
@@ -369,6 +396,7 @@ class ExpectTestCase(pexpect_test_case.PexpectTestCase):
         the_new_way = b""
         while 1:
             i = p.expect_exact([b"\n", pexpect.EOF])
+            assert isinstance(p.before, bytes)
             the_new_way = the_new_way + p.before
             if i == 1:
                 break
@@ -401,6 +429,7 @@ class ExpectTestCase(pexpect_test_case.PexpectTestCase):
         p.expect(
             pexpect.EOF
         )  # This basically tells it to read everything. Same as pexpect.run() function.
+        assert isinstance(p.before, bytes)
         the_new_way = p.before
         the_new_way = (
             the_new_way.replace(b"\r\n", b"\n")
@@ -453,31 +482,35 @@ class ExpectTestCase(pexpect_test_case.PexpectTestCase):
             searchwindowsize=128,
         )
         child.expect(["PATTERN"])
+        assert isinstance(child.before, bytes)
         assert len(child.before.splitlines()) == _HEAD_LINES
         assert child.after == b"PATTERN"
         assert child.buffer == b"!!!\r\n"
 
-    def _before_after(self, p: pexpect.spawn) -> None:
+    def _before_after(self, p: pexpect.spawn[bytes], expect: _Matcher) -> None:
         p.timeout = 5
 
-        p.expect(b"5")
+        expect(b"5")
         assert p.after == b"5"
+        assert isinstance(p.before, bytes)
         assert p.before.startswith(b"[0, 1, 2"), p.before
 
-        p.expect(b"50")
+        expect(b"50")
         assert p.after == b"50"
+        assert isinstance(p.before, bytes)
         assert p.before.startswith(b", 6, 7, 8"), p.before[:20]
         assert p.before.endswith(b"48, 49, "), p.before[-20:]
 
-        p.expect(pexpect.EOF)
+        expect(pexpect.EOF)
         assert p.after == pexpect.EOF
+        assert isinstance(p.before, bytes)
         assert p.before.startswith(b", 51, 52"), p.before[:20]
         assert p.before.endswith(b", 99]\r\n"), p.before[-20:]
 
     def test_before_after(self) -> None:
         """Check before/after for a few simple expect() matches."""
         p = pexpect.spawn(f"{self.PYTHONBIN} -Wi list100.py", env=no_coverage_env())
-        self._before_after(p)
+        self._before_after(p, p.expect)
 
     def test_before_after_exact(self) -> None:
         """Check the same simple before/after things for expect_exact().
@@ -485,9 +518,8 @@ class ExpectTestCase(pexpect_test_case.PexpectTestCase):
         (Grahn broke it at one point.)
         """
         p = pexpect.spawn(f"{self.PYTHONBIN} -Wi list100.py", env=no_coverage_env())
-        # mangle the spawn so we test expect_exact() instead
-        p.expect = p.expect_exact
-        self._before_after(p)
+        # drive the helper with expect_exact() instead
+        self._before_after(p, p.expect_exact)
 
     def test_before_after_timeout(self) -> None:
         """Tests that timeouts do not truncate before, a bug in 4.4-4.7."""
@@ -503,6 +535,7 @@ class ExpectTestCase(pexpect_test_case.PexpectTestCase):
         child.sendline("xyzzy")
         e = child.expect([b"xyzzy", pexpect.TIMEOUT], searchwindowsize=10, timeout=30)
         assert e == 0
+        assert isinstance(child.before, bytes)
         assert child.before[0:5] == b"BEGIN"
         child.sendeof()
         child.expect(pexpect.EOF)
@@ -534,14 +567,17 @@ class ExpectTestCase(pexpect_test_case.PexpectTestCase):
     def test_bad_arg(self) -> None:
         """Reject a pattern that is neither a string, a regex, EOF nor TIMEOUT."""
         p = pexpect.spawn("cat")
+        # What is under test is the value the signatures already rule out, so
+        # it reaches them through a name that claims to be a pattern.
+        not_a_pattern = cast("_Pattern", 1)
         with pytest.raises(TypeError, match=r".*must be one of"):
-            p.expect(1)
+            p.expect(not_a_pattern)
         with pytest.raises(TypeError, match=r".*must be one of"):
-            p.expect([1, b"2"])
+            p.expect([not_a_pattern, b"2"])
         with pytest.raises(TypeError, match=r".*must be one of"):
-            p.expect_exact(1)
+            p.expect_exact(not_a_pattern)
         with pytest.raises(TypeError, match=r".*must be one of"):
-            p.expect_exact([1, b"2"])
+            p.expect_exact([not_a_pattern, b"2"])
 
     def test_legacy_async_keyword(self) -> None:
         """Accept the pre-3.7 spelling of the async_ flag.
@@ -629,8 +665,9 @@ class ExpectTestCase(pexpect_test_case.PexpectTestCase):
     def test_stdin_closed(self) -> None:
         """Ensure pexpect continues to operate even when stdin is closed."""
 
-        class ClosedStdinProc(mp_context.Process):
+        class ClosedStdinProc(_Process):
             def run(self) -> None:
+                assert sys.__stdin__ is not None
                 sys.__stdin__.close()
                 cat = pexpect.spawn("cat")
                 cat.sendeof()
@@ -644,8 +681,10 @@ class ExpectTestCase(pexpect_test_case.PexpectTestCase):
     def test_stdin_stdout_closed(self) -> None:
         """Ensure pexpect continues to operate even when stdin and stdout is closed."""
 
-        class ClosedStdinStdoutProc(mp_context.Process):
+        class ClosedStdinStdoutProc(_Process):
             def run(self) -> None:
+                assert sys.__stdin__ is not None
+                assert sys.__stdout__ is not None
                 sys.__stdin__.close()
                 sys.__stdout__.close()
                 cat = pexpect.spawn("cat")

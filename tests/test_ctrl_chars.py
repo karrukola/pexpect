@@ -83,7 +83,11 @@ class TestCtrlChars(pexpect_test_case.PexpectTestCase):
         child = self.spawn_getch()
         child.expect("READY")
         child.sendintr()
-        child.expect(str(ord(ptyprocess._INTR)) + "<STOP>")
+        # ptyprocess resolves these from the tty on first use, so by the time a
+        # spawn exists they are the single bytes sendintr()/sendeof() wrote.
+        intr = ptyprocess._INTR
+        assert isinstance(intr, bytes)
+        child.expect(str(ord(intr)) + "<STOP>")
 
         child.send(byte(0))
         child.expect("0<STOP>")
@@ -96,7 +100,9 @@ class TestCtrlChars(pexpect_test_case.PexpectTestCase):
         child = self.spawn_getch()
         child.expect("READY")
         child.sendeof()
-        child.expect(str(ord(ptyprocess._EOF)) + "<STOP>")
+        eof = ptyprocess._EOF
+        assert isinstance(eof, bytes)
+        child.expect(str(ord(eof)) + "<STOP>")
 
         child.send(byte(0))
         child.expect("0<STOP>")

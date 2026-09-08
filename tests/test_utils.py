@@ -26,7 +26,7 @@ class SelectIgnoreInterruptsTestCase(unittest.TestCase):
         When :func:`utils.select_ignore_interrupts` is called with a timeout,
         Then it retries and returns the ready file descriptor.
         """
-        ready = ([1], [], [])
+        ready: tuple[list[int], list[int], list[int]] = ([1], [], [])
         with mock.patch.object(
             select, "select", side_effect=[InterruptedError(errno.EINTR, "interrupted"), ready]
         ) as fake_select:
@@ -41,7 +41,7 @@ class SelectIgnoreInterruptsTestCase(unittest.TestCase):
         When :func:`utils.select_ignore_interrupts` is called,
         Then it retries with no timeout and returns the ready file descriptor.
         """
-        ready = ([1], [], [])
+        ready: tuple[list[int], list[int], list[int]] = ([1], [], [])
         with mock.patch.object(
             select, "select", side_effect=[InterruptedError(errno.EINTR, "interrupted"), ready]
         ) as fake_select:

@@ -1,12 +1,5 @@
 """Tests for awaiting pexpect matches with ``async_=True``."""
 
-try:
-    import asyncio
-except ImportError:
-    asyncio = None
-
-import unittest
-
 import pytest
 
 import pexpect
@@ -17,7 +10,6 @@ from . import pexpect_test_case
 pytestmark = pytest.mark.usefixtures("fast_sleep", "lean_child_env", "killed_pty_children")
 
 
-@unittest.skipIf(asyncio is None, "Requires asyncio")
 class AsyncTests(pexpect_test_case.AsyncPexpectTestCase):
     """Tests for expect and expect_exact awaited as coroutines."""
 

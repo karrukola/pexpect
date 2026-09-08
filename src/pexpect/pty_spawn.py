@@ -7,10 +7,11 @@ import os
 import pty
 import signal
 import sys
+import termios
 import time
 import tty
 from contextlib import contextmanager
-from typing import IO, TYPE_CHECKING, Any
+from typing import IO, TYPE_CHECKING, Any, AnyStr, cast, overload
 
 import ptyprocess
 from ptyprocess.ptyprocess import use_native_pty_fork
@@ -39,7 +40,7 @@ def _wrap_ptyprocess_err() -> Iterator[None]:
         raise ExceptionPexpect(*e.args) from e
 
 
-class spawn(SpawnBase):
+class spawn(SpawnBase[AnyStr]):
     """Main class interface for Pexpect.
 
     Use this class to start and control child applications.
@@ -47,6 +48,56 @@ class spawn(SpawnBase):
 
     # This is purely informational now - changing it has no effect
     use_native_pty_fork = use_native_pty_fork
+
+    # Bound by _spawn(); declared here because ptyprocess carries no py.typed
+    # marker, so the type of the _spawnpty() result is not inferrable.
+    ptyproc: ptyprocess.PtyProcess
+
+    # Both are resolved by _resolve_command() and stay None for the
+    # ``command=None`` factory form. _spawn() re-encodes the argument list when
+    # an encoding is in force, so args holds bytes in that mode.
+    command: str | None
+    args: list[str] | list[bytes] | None
+
+    @overload
+    def __init__(
+        self: spawn[bytes],
+        command: str | None,
+        args: list[str] | None = None,
+        timeout: float | None = 30,
+        maxread: int = 2000,
+        searchwindowsize: int | None = None,
+        logfile: IO[Any] | None = None,
+        cwd: str | None = None,
+        env: dict[str, str] | None = None,
+        ignore_sighup: bool = False,
+        echo: bool = True,
+        preexec_fn: Callable[[], None] | None = None,
+        encoding: None = None,
+        codec_errors: str = "strict",
+        dimensions: tuple[int, int] | None = None,
+        use_poll: bool = False,
+    ) -> None: ...
+
+    @overload
+    def __init__(
+        self: spawn[str],
+        command: str | None,
+        args: list[str] | None = None,
+        timeout: float | None = 30,
+        maxread: int = 2000,
+        searchwindowsize: int | None = None,
+        logfile: IO[Any] | None = None,
+        cwd: str | None = None,
+        env: dict[str, str] | None = None,
+        ignore_sighup: bool = False,
+        echo: bool = True,
+        preexec_fn: Callable[[], None] | None = None,
+        encoding: str = ...,
+        codec_errors: str = "strict",
+        dimensions: tuple[int, int] | None = None,
+        use_poll: bool = False,
+    ) -> None: ...
 
     def __init__(
         self,
@@ -292,23 +343,29 @@ class spawn(SpawnBase):
             msg = "The argument, args, must be a list."
             raise TypeError(msg)
 
+        # Resolved through locals of their own: the attributes also hold the
+        # bytes form of the argument list (see the class body), which would
+        # make the string work below untypeable.
         if args == []:
-            self.args = split_command_line(command)
-            self.command = self.args[0]
+            resolved_args = split_command_line(command)
+            resolved_command = resolved_args[0]
         else:
             # Make a shallow copy of the args list.
-            self.args = args[:]
-            self.args.insert(0, command)
-            self.command = command
+            resolved_args = args[:]
+            resolved_args.insert(0, command)
+            resolved_command = command
+        self.args = resolved_args
+        self.command = resolved_command
 
-        command_with_path = which(self.command, env=self.env)
+        command_with_path = which(resolved_command, env=self.env)
         if command_with_path is None:
-            msg = f"The command was not found or was not executable: {self.command}."
+            msg = f"The command was not found or was not executable: {resolved_command}."
             raise ExceptionPexpect(msg)
         self.command = command_with_path
-        self.args[0] = self.command
+        # resolved_args is the very list self.args was just bound to.
+        resolved_args[0] = command_with_path
 
-        self.name = "<" + " ".join(self.args) + ">"
+        self.name = "<" + " ".join(resolved_args) + ">"
 
     def _ptyproc_kwargs(
         self,
@@ -365,11 +422,17 @@ class spawn(SpawnBase):
 
         kwargs = self._ptyproc_kwargs(preexec_fn, dimensions)
 
+        # _resolve_command() has just filled both of these in; the command
+        # check above is what guards a subclass that leaves them alone.
+        resolved_args = cast("list[str] | list[bytes]", self.args)
         if self.encoding is not None:
             # Encode command line using the specified encoding
-            self.args = [a if isinstance(a, bytes) else a.encode(self.encoding) for a in self.args]
+            resolved_args = [
+                a if isinstance(a, bytes) else a.encode(self.encoding) for a in resolved_args
+            ]
+            self.args = resolved_args
 
-        self.ptyproc = self._spawnpty(self.args, env=self.env, cwd=self.cwd, **kwargs)
+        self.ptyproc = self._spawnpty(resolved_args, env=self.env, cwd=self.cwd, **kwargs)
 
         self.pid = self.ptyproc.pid
         self.child_fd = self.ptyproc.fd
@@ -377,7 +440,7 @@ class spawn(SpawnBase):
         self.terminated = False
         self.closed = False
 
-    def _spawnpty(self, args: list[str], **kwargs: object) -> ptyprocess.PtyProcess:
+    def _spawnpty(self, args: list[str] | list[bytes], **kwargs: object) -> ptyprocess.PtyProcess:
         """Spawn a pty and return an instance of PtyProcess."""
         return ptyprocess.PtyProcess.spawn(args, **kwargs)
 
@@ -432,7 +495,11 @@ class spawn(SpawnBase):
         while True:
             if not self.getecho():
                 return True
-            if timeout < 0 and timeout is not None:
+            # The two halves of this guard are the wrong way round, so a None
+            # timeout raises TypeError here instead of blocking forever. That
+            # is a known defect kept as it stands (see docs/issues.md), which
+            # is why the comparison is cast rather than reordered.
+            if cast("float", timeout) < 0 and timeout is not None:
                 return False
             # timeout is never None here: the guard above compares it against 0
             # first, so a None timeout raises TypeError before this line. See
@@ -493,17 +560,26 @@ class spawn(SpawnBase):
             return bool(poll_ignore_interrupts([self.child_fd], timeout))
         return bool(select_ignore_interrupts([self.child_fd], [], [], timeout)[0])
 
-    def _read_available(self, size: int) -> str | bytes:
+    def _base_read_nonblocking(self, size: int) -> AnyStr:
+        """Read one chunk through :class:`SpawnBase`, in this instance's string mode.
+
+        The cast stands in for the string mode this instance was built with:
+        mypy does not carry the class's ``AnyStr`` parameter across a
+        ``super()`` call, so every call below goes through here instead.
+        """
+        return cast("AnyStr", super().read_nonblocking(size))
+
+    def _read_available(self, size: int) -> AnyStr:
         """Read up to *size* units of data that is already available, without waiting."""
         try:
-            incoming = super().read_nonblocking(size)
+            incoming = self._base_read_nonblocking(size)
         except EOF:
             # Maybe the child is dead: update some attributes in that case
             self.isalive()
             raise
         while len(incoming) < size and self._ready(0):
             try:
-                incoming += super().read_nonblocking(size - len(incoming))
+                incoming += self._base_read_nonblocking(size - len(incoming))
             # PERF203: the except EOF IS the early loop exit
             except EOF:  # per-read EOF is how this loop stops early  # noqa: PERF203
                 # Maybe the child is dead: update some attributes in that case
@@ -512,7 +588,7 @@ class spawn(SpawnBase):
                 break
         return incoming
 
-    def read_nonblocking(self, size: int = 1, timeout: float | None = -1) -> str | bytes:
+    def read_nonblocking(self, size: int = 1, timeout: float | None = -1) -> AnyStr:
         """Read at most *size* characters from the child application.
 
         It includes a timeout. If the read does not complete within the timeout
@@ -563,7 +639,7 @@ class spawn(SpawnBase):
             # forever or until TIMEOUT. For that reason, it's important
             # to do this check before waiting with a timeout.
             if self._ready(0):
-                return super().read_nonblocking(size)
+                return self._base_read_nonblocking(size)
             self.flag_eof = True
             msg = "End Of File (EOF). Braindead platform."
             raise EOF(msg)
@@ -577,7 +653,7 @@ class spawn(SpawnBase):
         # available right now. But if a non-zero timeout is given (possibly
         # timeout=None), we wait for data to arrive.
         if (timeout != 0) and self._ready(timeout):
-            return super().read_nonblocking(size)
+            return self._base_read_nonblocking(size)
 
         if not self.isalive():
             # Some platforms, such as Irix, will claim that their
@@ -643,7 +719,9 @@ class spawn(SpawnBase):
         s = self._coerce_send_string(s)
         self._log(s, "send")
 
-        b = self._encoder.encode(s, final=False)
+        # _coerce_send_string() has just brought s into this instance's string
+        # mode, which is what the encoder takes.
+        b = self._encoder.encode(cast("AnyStr", s), final=False)
         return os.write(self.child_fd, b)
 
     def sendline(self, s: str | bytes = "") -> int:
@@ -653,14 +731,17 @@ class spawn(SpawnBase):
         number of bytes may be sent for each line in the default terminal
         mode, see docstring of :meth:`send`.
         """
-        s = self._coerce_send_string(s)
-        return self.send(s + self.linesep)
+        # As in send(), the coerced string is in this instance's string mode,
+        # which is the one os.linesep was stored in.
+        coerced = cast("AnyStr", self._coerce_send_string(s))
+        return self.send(coerced + self.linesep)
 
     def _log_control(self, s: bytes) -> None:
         """Write control characters to the appropriate log files."""
+        logged: str | bytes = s
         if self.encoding is not None:
-            s = s.decode(self.encoding, "replace")
-        self._log(s, "send")
+            logged = s.decode(self.encoding, "replace")
+        self._log(logged, "send")
 
     def sendcontrol(self, char: str) -> int:
         r"""Send a control character to the child by mnemonic name.
@@ -794,7 +875,8 @@ class spawn(SpawnBase):
         """
         # Same as os.kill, but the pid is given for you.
         if self.isalive():
-            os.kill(self.pid, sig)
+            # isalive() has just spoken to the child, so there is a pid.
+            os.kill(cast("int", self.pid), sig)
 
     def getwinsize(self) -> tuple[int, int]:
         """Return the terminal window size of the child tty.
@@ -867,13 +949,15 @@ class spawn(SpawnBase):
         self.write_to_stdout(self.buffer)
         self.stdout.flush()
         self._buffer = self.buffer_type()
-        mode = tty.tcgetattr(self.STDIN_FILENO)
+        # tty re-exports these from termios with ``import *``, which typeshed
+        # does not model; they are the very same functions and flag.
+        mode = termios.tcgetattr(self.STDIN_FILENO)
         tty.setraw(self.STDIN_FILENO)
         escape_byte = None if escape_character is None else escape_character.encode("latin-1")
         try:
             self.__interact_copy(escape_byte, input_filter, output_filter)
         finally:
-            tty.tcsetattr(self.STDIN_FILENO, tty.TCSAFLUSH, mode)
+            termios.tcsetattr(self.STDIN_FILENO, termios.TCSAFLUSH, mode)
 
     def __interact_writen(self, fd: int, data: bytes) -> None:
         """Write all of *data* to *fd*; used by the interact() method."""
@@ -945,7 +1029,10 @@ class spawn(SpawnBase):
                 break
 
 
-def spawnu(*args: object, **kwargs: object) -> spawn:
+def spawnu(*args: object, **kwargs: object) -> spawn[str]:
     """Spawn with unicode I/O; deprecated, pass ``encoding`` to spawn() instead."""
     kwargs.setdefault("encoding", "utf-8")
-    return spawn(*args, **kwargs)
+    # An arbitrary argument list cannot be forwarded into the overloaded
+    # constructor, so the factory is annotated with the mode it produces.
+    factory: Callable[..., spawn[str]] = spawn
+    return factory(*args, **kwargs)

@@ -18,6 +18,8 @@ OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 
 """
 
+from __future__ import annotations
+
 import io
 import os
 import re
@@ -26,7 +28,7 @@ import sys
 import tempfile
 import time
 import unittest
-from collections.abc import Callable
+from typing import TYPE_CHECKING, Any
 from unittest import mock
 
 import pytest
@@ -36,10 +38,19 @@ from pexpect import pty_spawn
 
 from . import pexpect_test_case
 
+if TYPE_CHECKING:
+    from collections.abc import Callable
+
 pytestmark = pytest.mark.usefixtures("fast_sleep", "killed_pty_children")
 
 # the program cat(1) may display ^D\x08\x08 when \x04 (EOF, Ctrl-D) is sent
 _CAT_EOF = b"^D\x08\x08"
+
+# spawn.__interact_read and spawn.__interact_child_to_stdout are private to the
+# class that defines them, so their names come mangled; a caller from outside
+# pty_spawn can only name them in that form.
+_INTERACT_READ = "_spawn__interact_read"
+_INTERACT_CHILD_TO_STDOUT = "_spawn__interact_child_to_stdout"
 
 # The shortest read_nonblocking() timeout pexpect accepts on Irix. pexpect ships
 # 2 seconds; the test patches this shorter value in, because what it checks is
@@ -179,7 +190,10 @@ class TestCaseMisc(pexpect_test_case.PexpectTestCase):
 
     def test_with(self) -> None:
         """Spawn can be used as a context manager."""
-        with pexpect.spawn(self.PYTHONBIN + " echo_w_prompt.py") as p:
+        p = pexpect.spawn(self.PYTHONBIN + " echo_w_prompt.py")
+        # __enter__ hands back the base class, so the spawn is named up front
+        # and the block below works with it rather than with what `as` binds.
+        with p:
             p.expect("<in >")
             p.sendline(b"alpha")
             p.expect(b"<out>alpha")
@@ -190,7 +204,7 @@ class TestCaseMisc(pexpect_test_case.PexpectTestCase):
     def test_terminate(self) -> None:
         """Test force terminate always succeeds (SIGKILL)."""
         child = pexpect.spawn("cat")
-        child.terminate(force=1)
+        child.terminate(force=True)
         assert child.terminated
 
     def test_write_to_stdout_without_a_buffer(self) -> None:
@@ -325,8 +339,9 @@ class TestCaseMisc(pexpect_test_case.PexpectTestCase):
         Then the copy reports that there is nothing more to read.
         """
         child = pexpect.spawn("cat")
-        with mock.patch.object(child, "_spawn__interact_read", return_value=b""):
-            assert child._spawn__interact_child_to_stdout(None) is False
+        with mock.patch.object(child, _INTERACT_READ, return_value=b""):
+            child_to_stdout = getattr(child, _INTERACT_CHILD_TO_STDOUT)
+            assert child_to_stdout(None) is False
 
     def test_spawn_refuses_to_start_a_second_child(self) -> None:
         """Refuse to spawn again over a running child.
@@ -434,30 +449,36 @@ class TestCaseMisc(pexpect_test_case.PexpectTestCase):
         """Assert bad condition error in isalive()."""
         expect_errmsg = re.escape("isalive() encountered condition where ")
         child = pexpect.spawn("cat")
-        child.terminate(force=1)
+        child.terminate(force=True)
         # Force an invalid state to test isalive
-        child.ptyproc.terminated = 0
+        child.ptyproc.terminated = False
         try:
             with pytest.raises(pexpect.ExceptionPexpect, match=".*" + expect_errmsg):
                 child.isalive()
         finally:
             # Force valid state for child for __del__
-            child.terminated = 1
+            child.terminated = True
 
     def test_bad_arguments_suggest_fdpsawn(self) -> None:
         """Assert custom exception for spawn(int)."""
         expect_errmsg = "maybe you want to use fdpexpect.fdspawn"
+        # spawn() takes a command, and passing it a file descriptor instead is
+        # the whole point, so the call is made through a name that says nothing
+        # about what the constructor accepts.
+        factory: Callable[..., pexpect.spawn[bytes]] = pexpect.spawn
         with pytest.raises(pexpect.ExceptionPexpect, match=".*" + expect_errmsg):
-            pexpect.spawn(1)
+            factory(1)
 
     def test_bad_arguments_second_arg_is_list(self) -> None:
         """Second argument to spawn, if used, must be only a list."""
+        # as above: the arguments under test are ones spawn() does not accept.
+        factory: Callable[..., pexpect.spawn[bytes]] = pexpect.spawn
         with pytest.raises(TypeError):
-            pexpect.spawn("ls", "-la")
+            factory("ls", "-la")
 
         with pytest.raises(TypeError):
             # not even a tuple,
-            pexpect.spawn("ls", ("-la",))
+            factory("ls", ("-la",))
 
     def test_read_after_close_raises_value_error(self) -> None:
         """Calling read_nonblocking after close raises ValueError."""
@@ -494,8 +515,10 @@ class TestCaseMisc(pexpect_test_case.PexpectTestCase):
     def test_bad_type_in_expect(self) -> None:
         """expect() does not accept dictionary arguments."""
         child = pexpect.spawn("cat")
+        # a dict is not a pattern, which is what the call below checks
+        matcher: Callable[..., int] = child.expect
         with pytest.raises(TypeError):
-            child.expect({})
+            matcher({})
 
     def test_cwd(self) -> None:
         """Check keyword argument `cwd=' of pexpect.run()."""
@@ -507,8 +530,8 @@ class TestCaseMisc(pexpect_test_case.PexpectTestCase):
 
     def _test_searcher_as(
         self,
-        searcher: type[pexpect.searcher_string] | type[pexpect.searcher_re],
-        plus: type[pexpect.EOF] | type[pexpect.TIMEOUT] | None = None,
+        searcher: type[pexpect.searcher_string | pexpect.searcher_re],
+        plus: type[pexpect.EOF | pexpect.TIMEOUT] | None = None,
     ) -> None:
         # given,
         given_words = [
@@ -517,7 +540,9 @@ class TestCaseMisc(pexpect_test_case.PexpectTestCase):
             "gamma",
             "delta",
         ]
-        given_search = given_words
+        # searcher_string is given plain strings and searcher_re compiled
+        # patterns, so what the list holds depends on the class under test.
+        given_search: list[Any] = given_words
         if searcher == pexpect.searcher_re:
             given_search = [re.compile(word) for word in given_words]
         if plus is not None:

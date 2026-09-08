@@ -61,6 +61,10 @@ def sleep_spy(request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch) -
 class WaitNoEchoTestCase(pexpect_test_case.PexpectTestCase):
     """Tests that waitnoecho waits for the child, and gives up when it must."""
 
+    # Bound by the sleep_spy fixture above, through request.instance. Declared
+    # without a value, so the class carries no such attribute of its own.
+    sleeps: mock.Mock
+
     def echo_wait(self) -> pexpect.spawn:
         """Spawn the helper that turns ECHO off partway through its run."""
         return pexpect.spawn(f"{self.PYTHONBIN} echo_wait.py {_ECHO_OFF_AFTER} {_ECHO_STAYS_OFF}")
@@ -110,6 +114,7 @@ class WaitNoEchoTestCase(pexpect_test_case.PexpectTestCase):
         start = time.time()
 
         assert child.waitnoecho()
+        assert child.timeout is not None
         assert time.time() - start < child.timeout
 
 

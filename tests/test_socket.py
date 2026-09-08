@@ -18,6 +18,8 @@ OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 
 """
 
+from __future__ import annotations
+
 import errno
 import multiprocessing
 import os
@@ -30,18 +32,28 @@ from typing import TYPE_CHECKING
 import pytest
 
 import pexpect
-from pexpect import socket_pexpect
+from pexpect import fdpexpect, socket_pexpect
 
 from . import pexpect_test_case
 
 pytestmark = pytest.mark.usefixtures("fast_sleep")
 
 if TYPE_CHECKING:
+    from multiprocessing.context import DefaultContext, ForkContext
     from multiprocessing.synchronize import Event
+
+    # get_context() hands back a different class per start method, and only
+    # those concrete classes carry Process; their shared base does not.
+    MpContext = DefaultContext | ForkContext
+
+    # What spawn() hands back: this suite is run a second time by
+    # tests/test_socket_fd.py, which spawns on the socket's file descriptor.
+    SocketSession = socket_pexpect.SocketSpawn[bytes] | fdpexpect.fdspawn[bytes]
 
 # Python 3.14 changed the non-macOS POSIX default to forkserver
 # but the code in this module does not work with it
 # See https://github.com/python/cpython/issues/125714
+mp_context: MpContext
 if multiprocessing.get_start_method() == "forkserver":
     mp_context = multiprocessing.get_context(method="fork")
 else:
@@ -126,11 +138,13 @@ class ExpectTestCase(pexpect_test_case.PexpectTestCase):
 
     def tearDown(self) -> None:
         """Interrupt the socket server subprocess and reap it."""
-        os.kill(self.server_process.pid, signal.SIGINT)
+        pid = self.server_process.pid
+        assert pid is not None
+        os.kill(pid, signal.SIGINT)
         self.server_process.join(timeout=5.0)
         pexpect_test_case.PexpectTestCase.tearDown(self)
 
-    def socket_server(self, server_up: "Event") -> None:
+    def socket_server(self, server_up: Event) -> None:
         """Serve the canned motd and prompts until interrupted; runs in a subprocess."""
         sock = None
         try:
@@ -167,11 +181,11 @@ class ExpectTestCase(pexpect_test_case.PexpectTestCase):
 
     def spawn(
         self, sock: socket.socket, timeout: float = 30, *, use_poll: bool = False
-    ) -> socket_pexpect.SocketSpawn:
+    ) -> SocketSession:
         """Override me with other ways of spawning on a socket."""
         return socket_pexpect.SocketSpawn(sock, timeout=timeout, use_poll=use_poll)
 
-    def socket_fn(self, timed_out: "Event", all_read: "Event") -> None:
+    def socket_fn(self, timed_out: Event, all_read: Event) -> None:
         """Read everything the server sent, then time out on a second read.
 
         Runs in a subprocess and exits with ETIMEDOUT once the timeout is seen.
@@ -237,7 +251,9 @@ class ExpectTestCase(pexpect_test_case.PexpectTestCase):
         test_proc.daemon = True
         test_proc.start()
         all_read.wait(timeout=_STARTUP_TIMEOUT)
-        os.kill(test_proc.pid, signal.SIGWINCH)
+        pid = test_proc.pid
+        assert pid is not None
+        os.kill(pid, signal.SIGWINCH)
         timed_out.wait(timeout=_STARTUP_TIMEOUT)
         test_proc.join(timeout=5.0)
         assert test_proc.exitcode == errno.ETIMEDOUT
@@ -250,8 +266,10 @@ class ExpectTestCase(pexpect_test_case.PexpectTestCase):
         test_proc.daemon = True
         test_proc.start()
         all_read.wait(timeout=_STARTUP_TIMEOUT)
+        pid = test_proc.pid
+        assert pid is not None
         while not timed_out.is_set():
-            os.kill(test_proc.pid, signal.SIGWINCH)
+            os.kill(pid, signal.SIGWINCH)
             # Event.wait paces the signals with real time and returns as soon as
             # the child reports the timeout it was interrupted out of.
             timed_out.wait(timeout=0.001)

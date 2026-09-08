@@ -18,12 +18,15 @@ OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 
 """
 
+from __future__ import annotations
+
 import os
 import signal
 import subprocess
 import sys
 import time
 import unittest
+from typing import TYPE_CHECKING
 from unittest import mock
 
 import pytest
@@ -32,6 +35,9 @@ import pexpect
 from pexpect.popen_spawn import PopenSpawn
 
 from . import pexpect_test_case
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 pytestmark = pytest.mark.usefixtures("fast_sleep")
 
@@ -79,6 +85,7 @@ class ExpectTestCase(pexpect_test_case.PexpectTestCase):
         the_new_way = b""
         while 1:
             i = p.expect([b"\n", pexpect.EOF])
+            assert isinstance(p.before, bytes)
             the_new_way = the_new_way + p.before
             if i == 1:
                 break
@@ -93,6 +100,7 @@ class ExpectTestCase(pexpect_test_case.PexpectTestCase):
         the_new_way = b""
         while 1:
             i = p.expect_exact([b"\n", pexpect.EOF])
+            assert isinstance(p.before, bytes)
             the_new_way = the_new_way + p.before
             if i == 1:
                 break
@@ -112,6 +120,7 @@ class ExpectTestCase(pexpect_test_case.PexpectTestCase):
         # This basically tells it to read everything. Same as pexpect.run()
         # function.
         p.expect(pexpect.EOF)
+        assert isinstance(p.before, bytes)
         the_new_way = p.before.rstrip()
         assert the_old_way == the_new_way, len(the_old_way) - len(the_new_way)
 
@@ -134,14 +143,18 @@ class ExpectTestCase(pexpect_test_case.PexpectTestCase):
     def test_bad_arg(self) -> None:
         """Reject a pattern that is neither str, bytes nor a compiled regex."""
         p = PopenSpawn("cat")
+        # What is under test is the argument the signatures already rule out, so
+        # the matchers are called through names that accept anything.
+        expect: Callable[..., int] = p.expect
+        expect_exact: Callable[..., int] = p.expect_exact
         with pytest.raises(TypeError, match=r".*must be one of"):
-            p.expect(1)
+            expect(1)
         with pytest.raises(TypeError, match=r".*must be one of"):
-            p.expect([1, b"2"])
+            expect([1, b"2"])
         with pytest.raises(TypeError, match=r".*must be one of"):
-            p.expect_exact(1)
+            expect_exact(1)
         with pytest.raises(TypeError, match=r".*must be one of"):
-            p.expect_exact([1, b"2"])
+            expect_exact([1, b"2"])
 
     def test_timeout_none(self) -> None:
         """Match without a timeout, blocking until the data arrives."""

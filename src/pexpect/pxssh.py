@@ -21,14 +21,21 @@ PEXPECT LICENSE
 
 """
 
+from __future__ import annotations
+
 import contextlib
 import re
 import time
 from pathlib import Path
 from shlex import quote
-from typing import IO
+from typing import IO, TYPE_CHECKING
 
 from pexpect import EOF, TIMEOUT, ExceptionPexpect, spawn
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
+
+    from pexpect.spawnbase import _Pattern
 
 __all__ = ["ExceptionPxssh", "pxssh"]
 
@@ -71,7 +78,7 @@ class ExceptionPxssh(ExceptionPexpect):
     """Raised for pxssh exceptions."""
 
 
-class pxssh(spawn):
+class pxssh(spawn[bytes]):
     """Set up SSH connections, on top of :class:`pexpect.spawn`.
 
     This adds methods for login, logout, and expecting the shell
@@ -163,7 +170,12 @@ class pxssh(spawn):
         """
         if options is None:
             options = {}
-        spawn.__init__(
+        # pxssh is a bytes-mode spawn, so neither overload of the constructor
+        # accepts the ``str | None`` encoding this signature takes; the
+        # implementation behind them does. Calling it through a callable target
+        # forwards the arguments exactly as they are given.
+        spawn_init: Callable[..., None] = spawn.__init__
+        spawn_init(
             self,
             None,
             timeout=timeout,
@@ -222,7 +234,9 @@ class pxssh(spawn):
         if n > m:
             a, b = b, a
             n, m = m, n
-        current = range(n + 1)
+        # Materialised up front: every later row is a list, and the row is
+        # both indexed and assigned to below.
+        current: list[int] = list(range(n + 1))
         for i in range(1, m + 1):
             previous, current = current, [i] + [0] * n
             for j in range(1, n + 1):
@@ -394,7 +408,7 @@ class pxssh(spawn):
     def _answer_login_prompts(
         self,
         i: int,
-        session_regex_array: list[str | type[EOF] | type[TIMEOUT]],
+        session_regex_array: list[_Pattern],
         password: str,
         terminal_type: str,
     ) -> int:
@@ -511,7 +525,7 @@ class pxssh(spawn):
         """
         if ssh_tunnels is None:
             ssh_tunnels = {}
-        session_regex_array = [
+        session_regex_array: list[_Pattern] = [
             "(?i)are you sure you want to continue connecting",
             original_prompt,
             password_regex,
@@ -519,7 +533,7 @@ class pxssh(spawn):
             "(?i)terminal type",
             TIMEOUT,
         ]
-        session_init_regex_array = [
+        session_init_regex_array: list[_Pattern] = [
             *session_regex_array,
             "(?i)connection closed by remote host",
             EOF,
@@ -607,9 +621,10 @@ class pxssh(spawn):
         :return: True if the shell prompt was matched, False if the timeout was
                  reached.
         """
+        expect_timeout: float | None = timeout
         if timeout == -1:
-            timeout = self.timeout
-        i = self.expect([self.PROMPT, TIMEOUT], timeout=timeout)
+            expect_timeout = self.timeout
+        i = self.expect([self.PROMPT, TIMEOUT], timeout=expect_timeout)
         return i != 1
 
     def set_unique_prompt(self) -> bool:

@@ -22,14 +22,13 @@ class ExceptionPexpect(Exception):
         In other words, the stack trace inside the Pexpect module is not
         included.
         """
-        tblist = traceback.extract_tb(sys.exc_info()[2])
-        tblist = [
+        frames = traceback.extract_tb(sys.exc_info()[2])
+        outside = [
             item
-            for item in tblist
+            for item in frames
             if ("pexpect/__init__" not in item[0]) and ("pexpect/expect" not in item[0])
         ]
-        tblist = traceback.format_list(tblist)
-        return "".join(tblist)
+        return "".join(traceback.format_list(outside))
 
 
 class EOF(ExceptionPexpect):
