@@ -15,7 +15,10 @@ something untrue about the code or preserving the defect behind a cast, so they
 were fixed first, separately. Number 31 is fixed too, for a different reason:
 it stopped `replwrap.zsh()` from working at all on a machine that had not been
 configured for it, and the test that should have caught it was supplying the
-missing configuration itself. Everything else here is still outstanding.
+missing configuration itself. So is 32, found while verifying 31 and fixed in
+turn; its entry keeps the wrong diagnosis it was first filed with, because
+correcting it is most of what the entry has to say. Everything else here is
+still outstanding.
 
 Line numbers refer to the tree as of the lint pass and were each verified
 against the source, not inferred from the rule that surfaced them. The
@@ -574,23 +577,46 @@ was unusable.
 channel left once `--no-rcs` has ruled out a startup file, and the pin is gone
 from the tests. With the pin gone and the fix reverted, `test_zsh` fails.
 
-### 32. `replwrap.zsh()` cannot detect incomplete input
+### 32. `replwrap.zsh()` could not recover from incomplete input — **fixed**
 
-**`src/pexpect/replwrap.py:183` (`run_command`)**
+**`src/pexpect/replwrap.py:186` (`run_command`), `src/pexpect/_async_w_await.py:65`
+(`repl_run_command_async`)**
 
 On bash, an unterminated quote produces the continuation prompt, `run_command`
 sees it as match index 1, sends SIGINT and raises `ValueError`. On zsh the same
-input matches neither prompt: `run_command("echo '5 6")` waits out its timeout
-and raises `TIMEOUT` instead. This is not a `PS2` that failed to arrive — a zsh
-child started by `_repl_sh` reports both `PS2` and `PROMPT2` as the expected
-marker — so what zsh emits in that state has not been established.
+input raised `TIMEOUT` after the full timeout instead.
 
-Nothing covers it. `test_zsh` exercises the empty-input branch,
-`run_command("")`, which raises `ValueError` before any shell is involved;
-`test_multiline`, the only test of the continuation path, runs bash alone.
+This entry first recorded that as a failure to *detect* the continuation prompt.
+That was wrong, and the correction is the useful part: detection was never the
+problem. Instrumenting the two steps separately shows zsh returning index 1 from
+the same `_expect_prompt` bash does — the marker `PS2` arrives exactly as
+configured. What failed was the step after it. `run_command` sends SIGINT to
+abandon the partial command and then waits for a prompt, and zsh sent nothing,
+staying alive and silent until the wait expired.
 
-**Fix:** find what zsh prints for an incomplete command and match it too, or
-document continuation handling as bash-only.
+The cause is `+Z` in `zsh()`'s default arguments, which is NO_ZLE and turns the
+line editor off — deliberately, because the editor echoes each command back and
+wraps the prompt in terminal escapes. A shell in that state records a signal and
+acts on it only when it next reads from the terminal. Nothing else explains it:
+sending the signal to the process group instead of the process, and sending the
+terminal's own interrupt character with `sendintr()`, both leave zsh equally
+silent, while enabling the editor recovers it and corrupts every subsequent
+reply with escape sequences.
+
+**Fixed:** after the SIGINT, both the sync and the async paths now fall back to
+sending a newline if no prompt arrives, which is the read that makes the signal
+take effect. A newline is the one input that cannot complete a partial command:
+at a continuation prompt it extends whatever is still open, and once the signal
+has been acted on it is an empty command line. bash never reaches the fallback,
+so its timing is unchanged.
+
+The gap in the tests was real, and is closed. `test_zsh` covered only the
+empty-input branch, `run_command("")`, which raises `ValueError` before any
+shell is involved, and `test_multiline` — the only test of the continuation
+path — ran bash alone, which is why a shell-specific failure in the recovery
+went unseen. There is now a zsh test for the real thing, plus
+`tests/no_editor_repl.py`, a stand-in that records SIGINT and acts on it at its
+next read, so the fallback stays covered on a machine with no zsh installed.
 
 ---
 

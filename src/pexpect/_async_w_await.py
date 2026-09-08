@@ -11,7 +11,7 @@ import errno
 import signal
 from typing import TYPE_CHECKING, cast
 
-from pexpect import EOF
+from pexpect import EOF, TIMEOUT
 
 if TYPE_CHECKING:
     from pexpect.expect import Expecter
@@ -63,7 +63,13 @@ async def repl_run_command_async(
     if prompt_idx == 1:
         # We got the continuation prompt - command was incomplete
         repl.child.kill(signal.SIGINT)
-        await repl._expect_prompt(timeout=1, async_=True)
+        try:
+            await repl._expect_prompt(timeout=1, async_=True)
+        except TIMEOUT:
+            # A shell with its line editor off acts on the signal only when it
+            # next reads; see the same recovery in REPLWrapper.run_command.
+            repl.child.sendline("")
+            await repl._expect_prompt(timeout=1, async_=True)
         msg = "Continuation prompt found - input was incomplete:"
         raise ValueError(msg)
     return "".join([*res, cast("str", repl.child.before)])

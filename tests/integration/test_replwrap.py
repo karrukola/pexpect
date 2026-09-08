@@ -7,6 +7,10 @@ The first is cost. Reading a formatted man page, waiting out a command that
 sleeps, and starting Python's own interactive shell each take more than the
 per-test budget out there, whatever pexpect does around them.
 
+``test_recovers_when_no_prompt_follows_the_signal`` is here on cost too,
+though what it waits out is inside replwrap: the one-second timeout
+``run_command`` allows for a prompt after the SIGINT it sends.
+
 The second is that a shell is not something this repository ships. zsh is
 frequently absent, so ``test_zsh`` skips itself when it is; bash is effectively
 everywhere, but its prompt and its startup files belong to the host, and a test
@@ -26,6 +30,7 @@ import pytest
 
 import pexpect
 from pexpect import replwrap
+from tests.utils import no_editor_repl
 
 pytestmark = pytest.mark.usefixtures("fast_sleep", "lean_child_env")
 
@@ -135,6 +140,21 @@ class REPLWrapIntegrationTestCase(unittest.TestCase):
             msg = "Didn't raise ValueError for empty input"
             raise AssertionError(msg)
 
+    @unittest.skipUnless(shutil.which("zsh"), "zsh is not installed")
+    def test_zsh_recovers_from_incomplete_input(self) -> None:
+        """Reject incomplete input on a real zsh and leave the REPL usable.
+
+        zsh runs with its line editor off, so it does not act on the SIGINT
+        run_command sends until it next reads from the terminal. Until that was
+        handled this raised TIMEOUT after the full timeout instead of
+        ValueError, and no test noticed: the zsh test covered only the
+        empty-input branch, which never reaches a shell.
+        """
+        zsh = replwrap.zsh()
+        with pytest.raises(ValueError, match="input was incomplete"):
+            zsh.run_command("echo '5 6")
+        assert zsh.run_command("echo done").strip() == "done"
+
     def test_python(self) -> None:
         """Run single- and multi-line statements in a Python REPL."""
         if platform.python_implementation() == "PyPy":
@@ -161,6 +181,23 @@ class REPLWrapIntegrationTestCase(unittest.TestCase):
 
         res = py.run_command("for a in range(3): print(a)\n")
         assert res.strip().splitlines() == ["0", "1", "2"]
+
+
+class REPLWrapInterruptTestCase(unittest.TestCase):
+    """Tests for recovering a REPL after it is handed incomplete input."""
+
+    def test_recovers_when_no_prompt_follows_the_signal(self) -> None:
+        """Reject incomplete input on a REPL that ignores SIGINT until it reads.
+
+        Given a REPL that records SIGINT and acts on it only at its next read,
+        which is what zsh does with its line editor off,
+        When run_command submits a command the REPL treats as incomplete,
+        Then ValueError is raised and the REPL is still usable afterwards.
+        """
+        repl = no_editor_repl()
+        with pytest.raises(ValueError, match="input was incomplete"):
+            repl.run_command("keep going\\")
+        assert repl.run_command("done").strip() == "DONE"
 
 
 if __name__ == "__main__":

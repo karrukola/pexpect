@@ -184,7 +184,19 @@ class REPLWrapper:
         if self._expect_prompt(timeout=timeout) == 1:
             # We got the continuation prompt - command was incomplete
             self.child.kill(signal.SIGINT)
-            self._expect_prompt(timeout=1)
+            try:
+                self._expect_prompt(timeout=1)
+            except pexpect.TIMEOUT:
+                # A shell whose line editor is off does not abandon the partly
+                # entered command when the signal lands: it notices only when it
+                # next reads from the terminal, and prints nothing until then.
+                # zsh is started that way -- see `+Z` in zsh() -- so give it
+                # something to read. A newline is the one input that cannot
+                # complete a partial command: at a continuation prompt it
+                # extends whatever is still open, and once the signal has been
+                # acted on it is an empty command line.
+                self.child.sendline("")
+                self._expect_prompt(timeout=1)
             raise ValueError("Continuation prompt found - input was incomplete:\n" + command)
         return "".join([*res, cast("str", self.child.before)])
 
@@ -223,5 +235,17 @@ def bash(command: str = "bash") -> REPLWrapper:
 
 
 def zsh(command: str = "zsh", args: tuple[str, ...] = ("--no-rcs", "-V", "+Z")) -> REPLWrapper:
-    """Start a zsh shell and return a :class:`REPLWrapper` object."""
+    """Start a zsh shell and return a :class:`REPLWrapper` object.
+
+    The default arguments are zsh option letters: ``--no-rcs`` reads no startup
+    file, so the host's configuration cannot move the prompt; ``-V`` is
+    NO_PROMPT_CR, which stops zsh printing a carriage return ahead of each
+    prompt; and ``+Z`` is NO_ZLE, which turns the line editor off, because it
+    would echo each command back and wrap the prompt in terminal escapes.
+
+    Leaving the editor off has one consequence worth knowing: zsh does not act
+    on a signal until it next reads from the terminal, which is why
+    :meth:`REPLWrapper.run_command` follows the SIGINT it sends after incomplete
+    input with a newline.
+    """
     return _repl_sh(command, list(args), non_printable_insert="%(!..)")
