@@ -57,3 +57,33 @@ at collection time from what one child process costs on the machine running it;
 rather than in seconds. A test that needs to spend real time -- reading a
 formatted man page, waiting out a ``sleep``, starting a REPL -- belongs in
 ``tests/integration``, which sets its own generous budget.
+
+Test order
+==========
+
+`pytest-randomly <https://pypi.org/project/pytest-randomly/>`_ is a development
+dependency and is always on. It shuffles the modules, the classes within a
+module and the tests within a class, so the suite runs in a different order
+every time and no test can come to rely on another having run first. The order
+is printed at the top of each run::
+
+    Using --randomly-seed=3415093736
+
+Pass that number back to replay the exact order a failure appeared in::
+
+    pytest tests --randomly-seed=3415093736
+
+Do not reach for ``-p no:randomly``. A run that always goes in the same order
+is the one arrangement that cannot tell you whether the suite is order
+independent, and switching it off to make a failure go away hides the defect
+rather than the symptom. Every module also passes when run on its own, which is
+the same property from the other side.
+
+What this asks of a new test is that nothing process-wide outlives it. The
+working directory, the environment and ``PATH`` are already handled --
+``PexpectTestCase`` restores the first and ``monkeypatch`` or
+``mock.patch.dict`` the others -- but a signal handler, an interval timer, a
+listening socket or a child process left behind lands on whichever test the
+shuffle happens to run next. ``self.addCleanup`` is the shortest way to say so:
+see ``test_signal_handling`` in ``tests/test_expect.py``, which borrows
+``SIGALRM`` and has to give it back.
