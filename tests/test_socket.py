@@ -142,6 +142,14 @@ class ExpectTestCase(pexpect_test_case.PexpectTestCase):
         assert pid is not None
         os.kill(pid, signal.SIGINT)
         self.server_process.join(timeout=5.0)
+        if self.server_process.is_alive():
+            # Every test in this class and in tests/test_socket_fd.py listens on
+            # the one port, so a server that ignored the interrupt would hold it
+            # against whichever test the shuffle runs next -- as a daemon, past
+            # this process too. SIGKILL cannot be ignored; the join that follows
+            # is what makes the port free before the next setUp binds it.
+            self.server_process.kill()
+            self.server_process.join(timeout=5.0)
         pexpect_test_case.PexpectTestCase.tearDown(self)
 
     def socket_server(self, server_up: Event) -> None:
