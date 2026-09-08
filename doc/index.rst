@@ -1,8 +1,8 @@
 Pexpect version |version|
 =========================
 
-.. image:: https://travis-ci.org/pexpect/pexpect.png?branch=master
-   :target: https://travis-ci.org/pexpect/pexpect
+.. image:: https://github.com/karrukola/pexpect/actions/workflows/ci.yml/badge.svg?branch=master
+   :target: https://github.com/karrukola/pexpect/actions/workflows/ci.yml
    :align: right
    :alt: Build status
 
