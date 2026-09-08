@@ -54,8 +54,19 @@ class REPLWrapper:
     ) -> None:
         """Attach to the REPL, turn echo off and switch it to a unique prompt."""
         if isinstance(cmd_or_spawn, str):
+            # Add to the environment rather than replacing it -- see _repl_sh's
+            # own `env` below for the same idea applied to PS1. Without the
+            # rest of os.environ, a REPL started this way has no PATH, no HOME
+            # and no locale. TERM is pinned to "dumb" rather than left as
+            # whatever the parent's is: a 3.13+ Python REPL sees a real
+            # terminal and builds a full-screen editor before it shows a
+            # prompt, which wraps every reply in escape sequences instead of
+            # just the plain text run_command expects.
             self.child = pexpect.spawn(
-                cmd_or_spawn, echo=False, encoding="utf-8", env={"NO_COLOR": "1"}
+                cmd_or_spawn,
+                echo=False,
+                encoding="utf-8",
+                env={**os.environ, "NO_COLOR": "1", "TERM": "dumb"},
             )
         else:
             self.child = cmd_or_spawn

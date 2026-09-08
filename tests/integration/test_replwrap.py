@@ -183,6 +183,50 @@ class REPLWrapIntegrationTestCase(unittest.TestCase):
         assert res.strip().splitlines() == ["0", "1", "2"]
 
 
+class REPLWrapEnvironmentTestCase(unittest.TestCase):
+    """Tests for what environment ``replwrap.python()`` hands its child.
+
+    See issues.md entry 35. ``REPLWrapper.__init__`` used to replace the
+    child's environment outright (``env={"NO_COLOR": "1"}``) rather than add
+    to it, so a REPL started from a command string ran with no ``PATH``, no
+    ``HOME`` and no locale. The fix is ``env={**os.environ, "NO_COLOR": "1",
+    "TERM": "dumb"}`` -- both halves matter and this class checks both:
+    inheriting the parent's variables, and pinning ``TERM`` so a 3.13+ Python
+    does not rebuild its full-screen editor and wrap every reply in escape
+    sequences.
+
+    ``lean_child_env`` sets ``PYTHON_BASIC_REPL=1`` for every test in this
+    module, which would hide a broken ``TERM`` here too, so this test undoes
+    that one variable to be able to fail.
+    """
+
+    @pytest.fixture(autouse=True)
+    def _monkeypatch(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        self.monkeypatch = monkeypatch
+
+    def test_python_inherits_parent_environment(self) -> None:
+        """A parent-set variable reaches the child, and output comes back clean.
+
+        Given a variable set in this process's environment and
+        ``PYTHON_BASIC_REPL`` unset, so the real REPL editor is in play,
+        When ``replwrap.python()`` starts a REPL and it is asked to print
+        that variable,
+        Then the value comes back, and it is not wrapped in the escape
+        sequences a full-screen editor would add if ``TERM`` were left
+        pointing at a real terminal.
+        """
+        if platform.python_implementation() == "PyPy":
+            raise unittest.SkipTest(skip_pypy)
+
+        self.monkeypatch.delenv("PYTHON_BASIC_REPL", raising=False)
+        self.monkeypatch.setenv("PEXPECT_REPLWRAP_TEST_MARKER", "canary")
+
+        p = replwrap.python()
+        res = p.run_command("import os; print(os.environ.get('PEXPECT_REPLWRAP_TEST_MARKER'))")
+        assert res.strip() == "canary", res
+        assert "\x1b" not in res, res
+
+
 class REPLWrapInterruptTestCase(unittest.TestCase):
     """Tests for recovering a REPL after it is handed incomplete input."""
 
