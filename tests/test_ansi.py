@@ -18,11 +18,11 @@ OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 
 """
 
-import os
-import shutil
-import tempfile
+import logging
 import unittest
 from pathlib import Path
+
+import pytest
 
 from pexpect import ANSI, FSM
 
@@ -136,17 +136,8 @@ class AnsiTestCase(pexpect_test_case.PexpectTestCase):
         s = ANSI.ANSI(24, 80)
         with Path("torturet.vt").open() as f:
             sample_text = f.read()
-        # This causes ANSI.py's DoLog to write in the cwd.  Make sure we're in a
-        # writeable directory.
-        d = tempfile.mkdtemp()
-        old_cwd = Path.cwd()
-        os.chdir(d)
-        try:
-            for c in sample_text:
-                s.process(c)
-        finally:
-            os.chdir(old_cwd)
-            shutil.rmtree(d)
+        for c in sample_text:
+            s.process(c)
         assert s.pretty() == torture_target, (
             "processed: \n" + s.pretty() + "\nexpected:\n" + torture_target
         )
@@ -398,6 +389,32 @@ class AnsiTestCase(pexpect_test_case.PexpectTestCase):
         s = ANSI.ANSI(1, 4)
         s.write_ch(b"\xe4")
         assert str(s) == "\xe4   "
+
+
+def test_dolog_does_not_touch_the_filesystem(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """An unhandled escape sequence must not write a file into the cwd.
+
+    Given the current directory is an empty, writable directory,
+    When an ANSI terminal is fed an escape sequence with no transition of its
+    own, so the FSM falls back to its default transition, :func:`ANSI.DoLog`,
+    Then no file is created in that directory, and a debug log record is
+    emitted instead, naming the input symbol and the FSM state that DoLog
+    used to write to disk.
+    """
+    monkeypatch.chdir(tmp_path)
+    s = ANSI.ANSI(4, 10)
+    with caplog.at_level(logging.DEBUG, logger="pexpect.ANSI"):
+        s.write("\x1b[4h")  # set insert mode: no transition handles 'h'
+    assert list(tmp_path.iterdir()) == []
+    debug_records = [r for r in caplog.records if r.levelno == logging.DEBUG]
+    assert debug_records, "DoLog should have emitted a debug log record"
+    message = debug_records[-1].getMessage()
+    assert "h" in message
+    assert "NUMBER_1" in message
 
 
 if __name__ == "__main__":

@@ -28,11 +28,13 @@ PEXPECT LICENSE
 
 from __future__ import annotations
 
+import logging
 import string
-from pathlib import Path
 from typing import TYPE_CHECKING, cast
 
 from . import FSM, screen
+
+logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -214,15 +216,14 @@ def DoMode(fsm: FSM.FSM) -> None:
 
 
 def DoLog(fsm: FSM.FSM) -> None:
-    """Append the input symbol and the current state to a file named 'log'."""
+    """Log the input symbol and the current state at debug level."""
     screen = fsm.memory[0]
     fsm.memory = [screen]
     # Every transition that logs is driven by ANSI.write(), which feeds the
     # machine one character at a time between the string states below.
     input_symbol = cast("str", fsm.input_symbol)
     current_state = cast("str", fsm.current_state)
-    with Path("log").open("a") as fout:
-        fout.write(input_symbol + "," + current_state + "\n")
+    logger.debug("%s,%s", input_symbol, current_state)
 
 
 class term(screen.screen):
