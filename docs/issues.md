@@ -3,15 +3,16 @@
 Bugs and latent defects found while running a full `ruff` lint pass over the
 repository, later while taking the test suite to 100% line and branch coverage,
 later still while annotating the package for `mypy`, then while getting the
-suite to run clean on 3.10 through 3.14, and last in a review pass whose only
-task was to look for defects. Every entry from the first four was left alone at
-the time it was found, because fixing it would change runtime behaviour and that
-was out of scope for all of them — the lint work was required to be
+suite to run clean on 3.10 through 3.14, then in a review pass whose only task
+was to look for defects, and last while making the suite fail on any warning it
+raises. Every entry from the first four was left alone at the time it was
+found, because fixing it would change runtime behaviour and that was out of
+scope for all of them — the lint work was required to be
 behaviour-preserving, the coverage work to add tests rather than change the
 library, and the typing work to add annotations rather than either.
 
-**Twenty are now fixed**, and every entry says which it is. Six came from the
-earlier passes: 21, 27, 29 and 30 during the typing pass, because the
+**Twenty-two are now fixed**, and every entry says which it is. Six came from
+the earlier passes: 21, 27, 29 and 30 during the typing pass, because the
 annotations could not describe them without either stating something untrue
 about the code or preserving the defect behind a cast; then 31, which stopped
 `replwrap.zsh()` from working at all on a machine that had not been configured
@@ -20,17 +21,19 @@ configuration itself; and 32, found while verifying 31 and fixed in turn — its
 entry keeps the wrong diagnosis it was first filed with, because correcting it
 is most of what the entry has to say.
 
-The other fourteen are the review pass's own: 33 to 39, 41 to 46, and 50. That
-pass had no behaviour-preserving constraint on it, so its entries were fixed
-rather than filed, each with the test that proves it. What it left alone it
+Fourteen are the review pass's own: 33 to 39, 41 to 46, and 50. That pass had
+no behaviour-preserving constraint on it, so its entries were fixed rather than
+filed, each with the test that proves it. What it left alone it
 leaves alone for a reason it states: 40 needs a maintainer's decision about a
 documented contract, 47 is not worth the changelog line, 48 is release tooling,
 and 49 was found during the implementation and has not been through the review
-the rest had. Entries 1 to 20 and 22 to 26 and 28 are still outstanding.
+the rest had. The last two, 51 and 52, are the warnings pass's own and were
+fixed the same way. Entries 1 to 20 and 22 to 26 and 28 are still outstanding.
 
 Line numbers in the first six sections refer to the tree as of the lint pass and
 were each verified against the source, not inferred from the rule that surfaced
-them; the review pass's own section states the current ones. The library paths
+them; the review pass's own section and the warnings pass's state the current
+ones. The library paths
 are given under `src/pexpect/`, its location since the switch to the src layout;
 that move was a pure rename, so the line numbers are unaffected by it.
 
@@ -1429,6 +1432,118 @@ this module's tests reach the library through a command line they assemble by
 hand, so a change to how that line is built can disarm a test without failing
 it. The coverage gate is what caught this one, which is the argument for keeping
 it at 100.
+
+---
+
+## Found by failing the suite on warnings (2026-09-08)
+
+`pyproject.toml` gained `[tool.pytest] filterwarnings = ["error"]`, which turns
+every warning raised anywhere in a run -- including during collection -- into a
+failure. Fourteen distinct sources came out, and they arrived in a shape worth
+knowing about before reading them: a `ResourceWarning` is raised by a
+*finalizer*, so pytest charges it to whichever test happened to trigger the
+collection rather than to the test that leaked the object. The first run blamed
+`tests/test_expect.py::test_coerce_expect_re_enc_none` and
+`tests/test_pxssh.py::test_try_read_prompt_stops_at_its_total_timeout` for
+objects neither of them had ever touched.
+
+**Two were library defects**, recorded as **51** and **52** below and fixed.
+One is `pexpect.screen`'s own deprecation notice, which is not a defect at all:
+it is raised from the module body, so it lands during collection, where a
+`filterwarnings` mark cannot reach it. That one is now asserted by
+`tests/test_screen.py::ScreenTestCase::test_import_warns_of_the_deprecation`
+and let through at the two imports that raise it, rather than exempted for the
+whole run. The remaining eleven were tests abandoning what they opened. They
+are tabulated after the entries rather than numbered, because none of them is a
+defect in pexpect, and the table is keyed by the site that opened the object
+rather than by the warning, so one row can stand for several: a dropped
+`PopenSpawn` raises the still-running subprocess, its stdin pipe and -- its
+reader thread outliving it, which is **51** -- both of the `fork()` warnings.
+
+The suite is 391 tests, up from 390, and passes in random order on 3.10
+through 3.14 with coverage still at 100%.
+
+### 51. `PopenSpawn.close()` leaks the child's output pipe and its reader thread
+
+**`src/pexpect/popen_spawn.py:323`** -- **fixed**
+
+`close()` escalated correctly to reap the child and closed `proc.stdin`, but
+never touched `proc.stdout`, and never waited for the reader thread that
+`__init__` starts to drain it. So a closed `PopenSpawn` still held one
+descriptor and one thread, and released both only when the collector reached
+the object:
+
+```text
+tests/test_popen_spawn.py::ExpectTestCase::test_context_manager_closes_the_child
+  ResourceWarning: unclosed file <_io.FileIO name=20 mode='rb' closefd=True>
+```
+
+A program that creates and closes many of them runs out of descriptors. The
+surviving thread costs more than it looks, and this is what makes the entry
+worth more than its own warning: a process with a live thread cannot `fork()`
+without a `DeprecationWarning` on 3.12 and later, so the threads left behind by
+`tests/test_popen_spawn.py` made *every* child started by a later module warn --
+`pty.py:66: DeprecationWarning: This process is multi-threaded, use of
+forkpty() may lead to deadlocks in the child`, charged to `tests/test_run.py`,
+`tests/test_unicode.py`, `tests/test_winsize.py` and three more, none of which
+had anything to do with it.
+
+**Fixed** by joining the reader thread and then closing the read end. The join
+is bounded by `delayafterclose` rather than open-ended: the child is reaped by
+the time it runs, so the thread sees the end of the pipe within microseconds,
+but a *grandchild* can hold the write end open past the child's death and
+`close()` must not block on one. The order matters -- the thread reads by
+descriptor number, and a number closed under a blocked read is one the kernel
+is free to hand to something else.
+
+### 52. Nothing releases the asyncio transport an awaited `expect()` binds
+
+**`src/pexpect/_async_w_await.py:36`, `src/pexpect/spawnbase.py:157`** --
+**fixed**
+
+The first `await expect(...)` on a spawn calls `connect_read_pipe()` and stores
+the result on the spawn as `async_pw_transport`, so that the next await resumes
+reading rather than building another transport. Nothing ever unbound it. On a
+real EOF asyncio closes the transport itself -- `PatternWaiter.eof_received()`
+says as much in a comment -- so the leak is invisible in exactly the tests that
+read a child to the end, and shows up only for a spawn that was awaited, matched
+and then dropped or closed:
+
+```text
+tests/integration/test_destructor.py::TestCaseDestructor::test_destructor
+  ResourceWarning: unclosed transport <_UnixReadPipeTransport fd=16 open>
+```
+
+Four transports, from four awaited matches in two other modules, all reported
+against the one test that calls `gc.collect()`.
+
+**Fixed** with `SpawnBase._close_async_transport()`, called by all four
+concrete `close()` implementations before they release the descriptor, because
+closing the transport is what takes the event loop's reader off it. Two things
+in it are less obvious than they look. It unbinds the attribute *before*
+closing, because the transport's "pipe" is the spawn object itself, so closing
+it ends in asyncio calling that same `close()` a second time. And it suppresses
+`RuntimeError`, because a transport that outlived its event loop cannot be
+closed through -- `close()` schedules the callback that would release the pipe,
+and scheduling on a closed loop raises.
+
+### The eleven that were the tests' own
+
+Not defects in pexpect, and not numbered for that reason. Each is a test
+opening something and leaving it to the collector, which under
+`filterwarnings = ["error"]` fails a run and, being a finalizer, usually fails
+the wrong test.
+
+| Where | What was left open |
+|---|---|
+| `tests/test_popen_spawn.py` | Thirty spawns, four of which were ever closed: a still-running subprocess, both pipes and a reader thread apiece for the other twenty-six. Now built through a `_spawn()` helper that registers `close()` as cleanup, which the four that close themselves then find already done. |
+| `tests/test_socket.py` (`setUp`) | One or two sockets created only to ask the kernel which address family works here, then dropped. Now closed by the `_family_works()` helper that asks. |
+| `tests/test_socket.py` | Eight connections to the test server, never closed. Now opened by a `connect()` helper that registers the close. |
+| `tests/test_socket_fd.py` | The same eight, inherited, plus `test_fileobj`'s own. This module spawns on the bare descriptor, so `fdspawn.close()` closes it out from under the socket object and closing that again is EBADF -- which is why the shared cleanup suppresses `OSError`. |
+| `tests/test_socket_pexpect.py` | Two spawns over a preloaded socket pair. |
+| `tests/test_filedescriptor.py::test_fileobj` | A file object whose descriptor `fdspawn` had taken and closed. Its finalizer closed the descriptor a second time, which is both a `ResourceWarning` and a `PytestUnraisableExceptionWarning` -- `OSError: [Errno 9] Bad file descriptor`, raised where nothing can catch it. Now opened with `closefd=False`, which is what "fdspawn takes ownership" means in code rather than in a comment -- and which is the caller's side of the question **47** leaves open. |
+| `tests/integration/test_which.py` | Twenty-four pipes from `which(1)`, opened by `subprocess.Popen(stdout=PIPE)` for an exit status the caller reads and output it never reads. Now `subprocess.run(stdout=DEVNULL)`. |
+| `tests/test_async.py`, `tests/integration/test_async.py` | Children dropped rather than closed, which is what left **52**'s transports unreleased. |
 
 ---
 
