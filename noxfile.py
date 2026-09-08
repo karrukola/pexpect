@@ -43,7 +43,16 @@ def lint(session: nox.Session) -> None:
     _install_deps(session)
     session.run("ruff", "format", "--check", _REPO_ROOT)
     session.run("ruff", "check", _REPO_ROOT)
-    session.run("mypy", "--junit-xml", "reports/mypy.xml", _SRC_ROOT, _TESTS_ROOT)
+    # One report per interpreter. The five lint sessions would otherwise take turns
+    # overwriting a single reports/mypy.xml, which CI publishes as an artifact and
+    # would then publish only the last of.
+    session.run(
+        "mypy",
+        "--junit-xml",
+        f"reports/mypy-{session.python}.xml",
+        _SRC_ROOT,
+        _TESTS_ROOT,
+    )
 
 
 @nox.session
