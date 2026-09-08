@@ -65,10 +65,11 @@ _YIELD_SECONDS = 0.01
 
 
 # The per-test budget is this many child processes' worth of time. The most any
-# one test outside tests/integration drives is six -- test_misc's
+# one test outside tests/integration drives is four -- test_misc's
 # test_read_after_close_raises_value_error spawns and closes `cat` once per read
-# method -- and the rest is headroom, so a test that leaks a real sleep or hangs
-# still fails rather than passing slowly.
+# method, for read_nonblocking, read, readline and readlines -- so six is that
+# worst case plus half again, and a test that leaks a real sleep or hangs still
+# fails rather than passing slowly.
 _CHILDREN_PER_TEST = 6
 
 # Never tighter than this, however fast the machine measures. 150 ms is the
