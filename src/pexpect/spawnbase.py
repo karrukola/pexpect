@@ -46,6 +46,11 @@ if TYPE_CHECKING:
 _StrT_contra = TypeVar("_StrT_contra", contravariant=True)
 _StrT_co = TypeVar("_StrT_co", covariant=True)
 
+# Bound so __enter__ can return the concrete subclass rather than SpawnBase
+# itself; typing.Self would do this, but the project still supports versions
+# of Python without it.
+_SelfT = TypeVar("_SelfT", bound="SpawnBase[Any]")
+
 
 class _Encoder(Protocol[_StrT_contra]):
     """The incremental encoder half of a string mode, str or bytes."""
@@ -820,7 +825,7 @@ class SpawnBase(Generic[AnyStr]):
             """
 
     # For 'with spawn(...) as child:'
-    def __enter__(self) -> SpawnBase[AnyStr]:
+    def __enter__(self: _SelfT) -> _SelfT:  # noqa: PYI019 -- no typing.Self at runtime on py3.10
         """Return self so the spawn object can be used as a context manager."""
         return self
 
