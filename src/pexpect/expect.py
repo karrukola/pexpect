@@ -55,7 +55,9 @@ class Expecter(Generic[AnyStr]):
         if index >= 0:
             spawn._buffer = spawn.buffer_type()
             spawn._buffer.write(window[searcher.end :])
-            spawn.before = spawn._before.getvalue()[0 : -(len(window) - searcher.start)]
+            before_value = spawn._before.getvalue()
+            tail = len(window) - searcher.start
+            spawn.before = before_value[: max(0, len(before_value) - tail)]
             spawn._before = spawn.buffer_type()
             spawn._before.write(window[searcher.end :])
             spawn.after = window[searcher.start : searcher.end]

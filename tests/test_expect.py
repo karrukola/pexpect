@@ -415,6 +415,69 @@ class ExpectTestCase(pexpect_test_case.PexpectTestCase):
         assert p.before == b"hello"
         assert p.after == b".?"
 
+    def test_expect_zero_length_match_at_window_end(self) -> None:
+        r"""Keep `before` when a pattern matches zero-length at the window end.
+
+        Given a buffer left behind by a previous match, When a pattern that
+        can match the empty string at the very end of the window (``\\s*$``)
+        is expected, Then `before` still holds that buffered data rather than
+        being discarded, per the arithmetic in ``Expecter.do_search()``: a
+        zero-length match flush against the end of the window used to make
+        the slice collapse to `[0:0]`.
+        """
+        p = pexpect.spawn("cat", encoding="utf-8", timeout=5)
+        p.send("abcdef")
+        p.expect_exact("abc")
+        assert p.buffer == "def"
+        idx = p.expect(r"\s*$")
+        assert idx == 0
+        assert p.before == "def"
+        assert p.after == ""
+        p.close(force=True)
+
+    def test_expect_nonzero_length_match_at_window_end(self) -> None:
+        """Control for test_expect_zero_length_match_at_window_end().
+
+        Same buffer, a pattern one character longer than a bare `$` so the
+        match has a body, and `before` comes back correct today. Pairing the
+        two documents the exact boundary the fix in do_search() has to get
+        right.
+        """
+        p = pexpect.spawn("cat", encoding="utf-8", timeout=5)
+        p.send("abcdef")
+        p.expect_exact("abc")
+        assert p.buffer == "def"
+        idx = p.expect(r"f$")
+        assert idx == 0
+        assert p.before == "de"
+        assert p.after == "f"
+        p.close(force=True)
+
+    def test_expect_before_shorter_than_window_is_clamped(self) -> None:
+        """Never invent characters when `_before` is shorter than the window.
+
+        `buffer` is a public property (`SpawnBase._set_buffer`) that replaces
+        `_buffer` but leaves `_before` untouched, so the two can legitimately
+        fall out of step. Here `_before` ends up holding 'xy' while the next
+        search window is the longer 'abc', so the naive cut
+        `before_value[len(before_value) - tail :]`-style arithmetic (without
+        clamping to zero) would slice with a negative index and return 'x' --
+        a character `before` never actually held. The fix must clamp instead,
+        leaving `before` empty exactly as it is today.
+        """
+        p = pexpect.spawn("cat", encoding="utf-8", timeout=5)
+        p.send("abcxy")
+        p.expect_exact("abc")
+        assert p.before == ""
+        assert p.buffer == "xy"
+        assert p._before.getvalue() == "xy"  # asserting the setup, not just the API
+        p.buffer = "abc"  # public setter: replaces _buffer, leaves _before at 'xy'
+        idx = p.expect("a")
+        assert idx == 0
+        assert p.before == ""
+        assert p.after == "a"
+        p.close(force=True)
+
     def test_expect_eof(self) -> None:
         """Read everything `ls -l /bin` prints by expecting EOF."""
         the_old_way = (
