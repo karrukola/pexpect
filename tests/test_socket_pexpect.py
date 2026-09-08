@@ -53,6 +53,7 @@ class ExpectTestCase(pexpect_test_case.PexpectTestCase):
         """Match a pattern and then EOF on data read from a socket."""
         socket = open_file_socket("TESTDATA.txt")
         s = socket_pexpect.SocketSpawn(socket)
+        self.addCleanup(s.close)
         s.expect(b"This is the end of test data:")
         s.expect(pexpect.EOF)
         assert s.before == b" END\n"
@@ -61,6 +62,7 @@ class ExpectTestCase(pexpect_test_case.PexpectTestCase):
         """Match across reads when maxread is smaller than the available data."""
         socket = open_file_socket("TESTDATA.txt")
         s = socket_pexpect.SocketSpawn(socket)
+        self.addCleanup(s.close)
         s.maxread = 100
         s.expect("2")
         s.expect("This is the end of test data:")

@@ -20,6 +20,7 @@ OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 
 from __future__ import annotations
 
+import contextlib
 import errno
 import multiprocessing
 import os
@@ -83,15 +84,9 @@ class ExpectTestCase(pexpect_test_case.PexpectTestCase):
         pexpect_test_case.PexpectTestCase.setUp(self)
         self.af = socket.AF_INET
         self.host = "127.0.0.1"
-        try:
-            socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        except OSError:
-            try:
-                socket.socket(socket.AF_INET6, socket.SOCK_STREAM)
-                self.af = socket.AF_INET6
-                self.host = "::1"
-            except OSError:
-                pass
+        if not self._family_works(socket.AF_INET) and self._family_works(socket.AF_INET6):
+            self.af = socket.AF_INET6
+            self.host = "::1"
         self.port = 49152 + 10000
         self.motd = (
             b"""\
@@ -135,6 +130,41 @@ class ExpectTestCase(pexpect_test_case.PexpectTestCase):
         if not self.server_up.wait(timeout=_STARTUP_TIMEOUT):
             msg = "Could not start socket server"
             raise SocketServerError(msg)
+
+    @staticmethod
+    def _family_works(family: socket.AddressFamily) -> bool:
+        """Report whether a stream socket of *family* can be created here.
+
+        The socket is closed again straight away: this asks the kernel a
+        question about the machine, and a socket left over from asking it is
+        reported as an unclosed one by whichever later test collects it.
+        """
+        try:
+            with socket.socket(family, socket.SOCK_STREAM):
+                return True
+        except OSError:
+            return False
+
+    @staticmethod
+    def _close_connection(sock: socket.socket) -> None:
+        """Close *sock* unless its descriptor has already been closed for it.
+
+        A session spawned on a socket owns the descriptor from then on.
+        :meth:`SocketSpawn.close` closes the socket object, which leaves this
+        a second, harmless call; but tests/test_socket_fd.py spawns on the
+        bare descriptor, and :meth:`fdspawn.close` closes that, leaving the
+        socket object holding a number that is no longer its own. Closing it
+        again is EBADF, and leaving it unclosed is a ResourceWarning.
+        """
+        with contextlib.suppress(OSError):
+            sock.close()
+
+    def connect(self) -> socket.socket:
+        """Return a socket connected to the test server, closed when the test ends."""
+        sock = socket.socket(self.af, socket.SOCK_STREAM)
+        self.addCleanup(self._close_connection, sock)
+        sock.connect((self.host, self.port))
+        return sock
 
     def tearDown(self) -> None:
         """Interrupt the socket server subprocess and reap it."""
@@ -215,8 +245,7 @@ class ExpectTestCase(pexpect_test_case.PexpectTestCase):
 
     def test_socket(self) -> None:
         """Walk the whole prompt sequence with send() and end at EOF."""
-        sock = socket.socket(self.af, socket.SOCK_STREAM)
-        sock.connect((self.host, self.port))
+        sock = self.connect()
         session = self.spawn(sock, timeout=10)
         session.expect(self.prompt1)
         assert session.before == self.motd
@@ -230,8 +259,7 @@ class ExpectTestCase(pexpect_test_case.PexpectTestCase):
 
     def test_socket_with_write(self) -> None:
         """write() drives the prompt sequence just as send() does."""
-        sock = socket.socket(self.af, socket.SOCK_STREAM)
-        sock.connect((self.host, self.port))
+        sock = self.connect()
         session = self.spawn(sock, timeout=10)
         session.expect(self.prompt1)
         assert session.before == self.motd
@@ -245,8 +273,7 @@ class ExpectTestCase(pexpect_test_case.PexpectTestCase):
 
     def test_timeout(self) -> None:
         """Expecting a pattern the server never sends raises TIMEOUT."""
-        sock = socket.socket(self.af, socket.SOCK_STREAM)
-        sock.connect((self.host, self.port))
+        sock = self.connect()
         session = self.spawn(sock, timeout=_READ_TIMEOUT)
         with pytest.raises(pexpect.TIMEOUT):
             session.expect(b"Bogus response")
@@ -286,8 +313,7 @@ class ExpectTestCase(pexpect_test_case.PexpectTestCase):
 
     def test_maxread(self) -> None:
         """A maxread smaller than the motd still matches across reads."""
-        sock = socket.socket(self.af, socket.SOCK_STREAM)
-        sock.connect((self.host, self.port))
+        sock = self.connect()
         session = self.spawn(sock, timeout=10)
         session.maxread = 1100
         session.expect(self.prompt1)
@@ -302,8 +328,7 @@ class ExpectTestCase(pexpect_test_case.PexpectTestCase):
 
     def test_fd_isalive(self) -> None:
         """The session stops being alive once the underlying socket is closed."""
-        sock = socket.socket(self.af, socket.SOCK_STREAM)
-        sock.connect((self.host, self.port))
+        sock = self.connect()
         session = self.spawn(sock, timeout=10)
         assert session.isalive()
         sock.close()
@@ -311,8 +336,7 @@ class ExpectTestCase(pexpect_test_case.PexpectTestCase):
 
     def test_fd_isalive_poll(self) -> None:
         """isalive() tracks the closed socket when use_poll is set."""
-        sock = socket.socket(self.af, socket.SOCK_STREAM)
-        sock.connect((self.host, self.port))
+        sock = self.connect()
         session = self.spawn(sock, timeout=10, use_poll=True)
         assert session.isalive()
         sock.close()
@@ -320,16 +344,14 @@ class ExpectTestCase(pexpect_test_case.PexpectTestCase):
 
     def test_fd_isatty(self) -> None:
         """A socket is not a tty."""
-        sock = socket.socket(self.af, socket.SOCK_STREAM)
-        sock.connect((self.host, self.port))
+        sock = self.connect()
         session = self.spawn(sock, timeout=10)
         assert not session.isatty()
         session.close()
 
     def test_fd_isatty_poll(self) -> None:
         """A socket is not a tty when use_poll is set either."""
-        sock = socket.socket(self.af, socket.SOCK_STREAM)
-        sock.connect((self.host, self.port))
+        sock = self.connect()
         session = self.spawn(sock, timeout=10, use_poll=True)
         assert not session.isatty()
         session.close()

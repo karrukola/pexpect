@@ -20,7 +20,6 @@ OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 
 from __future__ import annotations
 
-import socket
 import unittest
 from typing import TYPE_CHECKING
 
@@ -32,6 +31,7 @@ from pexpect import fdpexpect
 from . import test_socket
 
 if TYPE_CHECKING:
+    import socket
     from collections.abc import Callable
 
 pytestmark = pytest.mark.usefixtures("fast_sleep")
@@ -61,8 +61,7 @@ class ExpectTestCase(test_socket.ExpectTestCase):
 
     def test_fileobj(self) -> None:
         """Accept an object with a fileno(), and tolerate a second close()."""
-        sock = socket.socket(self.af, socket.SOCK_STREAM)
-        sock.connect((self.host, self.port))
+        sock = self.connect()
         session = fdpexpect.fdspawn(sock, timeout=10)  # Should get the fileno from the socket
         session.expect(self.prompt1)
         session.close()
