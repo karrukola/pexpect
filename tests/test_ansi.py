@@ -20,13 +20,22 @@ OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 
 import logging
 import unittest
+import warnings
 from pathlib import Path
 
 import pytest
 
-from pexpect import ANSI, FSM
-
 from . import pexpect_test_case
+
+# pexpect.ANSI imports pexpect.screen, whose module body announces the
+# deprecation of both, so this import raises it and the suite treats a warning
+# as an error. Let through here for the same reason as in tests/test_screen.py,
+# which is also where the warning itself is asserted: it is raised by
+# pexpect.screen, and by the time this module is imported that one may already
+# have been imported and have raised it.
+with warnings.catch_warnings():
+    warnings.simplefilter("ignore", UserWarning)
+    from pexpect import ANSI, FSM
 
 write_target = (
     "I've got a ferret sticking up my nose.                           \n"

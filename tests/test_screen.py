@@ -18,13 +18,23 @@ OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 
 """
 
+import importlib.util
 import unittest
+import warnings
 
 import pytest
 
-from pexpect import screen
-
 from . import pexpect_test_case
+
+# pexpect.screen announces its own deprecation from its module body, so this
+# import raises it, and the suite treats a warning as an error. The module is
+# still shipped and this file is its test, so the import has to happen and the
+# warning has to be let through -- here, at the one import that expects it,
+# rather than by exempting the message for the whole run. That it is raised at
+# all is asserted by ScreenTestCase.test_import_warns_of_the_deprecation.
+with warnings.catch_warnings():
+    warnings.simplefilter("ignore", UserWarning)
+    from pexpect import screen
 
 fill1_target = (
     "XXXXXXXXXX\n"
@@ -479,6 +489,23 @@ class ScreenTestCase(pexpect_test_case.PexpectTestCase):
         s.cursor_home(3, 3)
         s.erase_down()
         assert str(s) == "......\n......\n..    "
+
+    def test_import_warns_of_the_deprecation(self) -> None:
+        """Announce the deprecation of this module, and of pexpect.ANSI, on import.
+
+        A module body runs once per process and this one has already run, so
+        importing pexpect.screen again hands back the module the rest of the
+        suite is holding and raises nothing. The body is executed once more
+        instead, into a module object that is thrown away: that is what a first
+        import does, without replacing the pexpect.screen every other test --
+        and pexpect.ANSI's own class hierarchy -- was built against.
+        """
+        spec = importlib.util.find_spec("pexpect.screen")
+        assert spec is not None
+        assert spec.loader is not None
+
+        with pytest.warns(UserWarning, match="pexpect.screen and pexpect.ANSI are deprecated"):
+            spec.loader.exec_module(importlib.util.module_from_spec(spec))
 
 
 if __name__ == "__main__":
