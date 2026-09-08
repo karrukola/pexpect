@@ -94,11 +94,16 @@ class TestCaseWhich(pexpect_test_case.PexpectTestCase):
 
                 assert should_match == can_execute, (should_match, can_execute, mode_str)
 
-                # exercise whether which(1) would match
-                proc = subprocess.Popen(  # noqa: S603  # located system `which` binary
-                    (bin_which, fname), env={"PATH": str(bin_dir)}, stdout=subprocess.PIPE
+                # exercise whether which(1) would match; only the exit status
+                # is read, so the output goes to the null device rather than
+                # into a pipe this loop would have to close two dozen times.
+                completed = subprocess.run(  # noqa: S603  # located system `which` binary
+                    (bin_which, fname),
+                    env={"PATH": str(bin_dir)},
+                    stdout=subprocess.DEVNULL,
+                    check=False,
                 )
-                bin_which_match = bool(not proc.wait())
+                bin_which_match = not completed.returncode
                 assert should_match == bin_which_match, (should_match, bin_which_match, mode_str)
 
                 # finally, exercise pexpect's which(1) matches
