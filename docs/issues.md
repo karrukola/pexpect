@@ -1,11 +1,17 @@
 # Known issues
 
 Bugs and latent defects found while running a full `ruff` lint pass over the
-repository, and later while taking the test suite to 100% line and branch
-coverage. **None of them are fixed.** Every entry here was left alone because
-fixing it would change runtime behaviour, which was out of scope for both
-passes — the lint work itself was required to be behaviour-preserving, and the
-coverage work was required to add tests, not to change the library.
+repository, later while taking the test suite to 100% line and branch coverage,
+and later still while annotating the package for `mypy`. Every entry was left
+alone at the time it was found, because fixing it would change runtime
+behaviour and that was out of scope for all three passes — the lint work was
+required to be behaviour-preserving, the coverage work to add tests rather than
+change the library, and the typing work to add annotations rather than either.
+
+**Four are now fixed**, and are marked as such where they appear: 21, 27, 29
+and 30. The annotations could not describe those four without either stating
+something untrue about the code or preserving the defect behind a cast, so they
+were fixed first, separately. Everything else here is still outstanding.
 
 Line numbers refer to the tree as of the lint pass and were each verified
 against the source, not inferred from the rule that surfaced them. The
@@ -320,6 +326,8 @@ the other examples)
 
 ### 21. `test_socket.py` — server subprocess dies instead of shutting down
 
+**Fixed.** The explicit-shutdown path runs for the first time.
+
 **`tests/test_socket.py:148`**
 
 ```python
@@ -429,6 +437,9 @@ timeout, and says so.
 
 ### 27. `PopenSpawn._read_incoming()` logs an exception object to a byte stream
 
+**Fixed.** The message is logged as this spawn's string type, and the reader
+thread survives to queue its EOF sentinel.
+
 **`src/pexpect/popen_spawn.py:142`**
 
 ```python
@@ -469,6 +480,65 @@ says so.
 
 Not a bug in itself — the branch is a sensible guard — but it is dead code as
 written.
+
+---
+
+## Found during the typing pass (`src/pexpect/`)
+
+Both of these were fixed rather than annotated, because neither could be
+described truthfully: the declared string type would have had to disagree with
+what the code returns.
+
+### 29. `SocketSpawn` never decodes what it reads
+
+**`src/pexpect/socket_pexpect.py:149`**
+
+```python
+s = self.socket.recv(size)
+...
+return s
+```
+
+Every other `read_nonblocking` implementation returns
+`self._decoder.decode(...)`. This one returns the socket's raw bytes, so with an
+encoding set the bytes are written into the `StringIO` buffer that str mode
+installs:
+
+```python
+SocketSpawn(sock, encoding="utf-8").expect("anything")
+# TypeError: string argument expected, got 'bytes'
+```
+
+Bytes mode is unaffected, which is why no test caught it: `_NullCoder.decode`
+hands the same bytes back, so the fix is a no-op there.
+
+**Fixed:** `return self._decoder.decode(s, final=False)`.
+
+### 30. `PopenSpawn.read_nonblocking()` fails on a spawn with no timeout
+
+**`src/pexpect/popen_spawn.py:116`**
+
+```python
+if timeout == -1:
+    timeout = self.timeout
+elif timeout is None:
+    timeout = 1e6
+```
+
+The `elif` skips the normalisation in exactly the case that needs it. Reaching
+the second branch requires `timeout` to have arrived as None, but the first
+branch is what puts a None there, when the spawn was created with
+`timeout=None`:
+
+```
+TypeError: '<' not supported between instances of 'float' and 'NoneType'
+```
+
+So `PopenSpawn(cmd, timeout=None)` — documented as "block forever" — raises on
+the first read. `expect()` always passes a timeout explicitly, which is why the
+suite never reached it.
+
+**Fixed:** `if` rather than `elif`.
 
 ---
 

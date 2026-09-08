@@ -152,7 +152,7 @@ class ExpectTestCase(pexpect_test_case.PexpectTestCase):
                     break
                 conn.send(self.prompt3)
                 result = conn.recv(1024)
-                if result.startswith(self.exit[0]):
+                if result.startswith(self.exit[:1]):
                     conn.shutdown(socket.SHUT_RDWR)
                     conn.close()
         except KeyboardInterrupt:

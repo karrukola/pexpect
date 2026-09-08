@@ -146,7 +146,9 @@ class SocketSpawn(SpawnBase):
                     self.flag_eof = True
                     msg = "Socket closed"
                     raise EOF(msg)
-                return s
+                # A no-op in bytes mode, where the null coder returns the same
+                # bytes; in str mode this is what every other read path does.
+                return self._decoder.decode(s, final=False)
         except TimeoutError as err:
             msg = "Timeout exceeded."
             raise TIMEOUT(msg) from err

@@ -109,7 +109,9 @@ class PopenSpawn(SpawnBase):
 
         if timeout == -1:
             timeout = self.timeout
-        elif timeout is None:
+        # Not elif: the branch above is exactly what leaves a None here, when
+        # the spawn was built with timeout=None.
+        if timeout is None:
             timeout = 1e6
 
         t0 = time.time()
@@ -139,7 +141,11 @@ class PopenSpawn(SpawnBase):
             try:
                 buf = os.read(fileno, 1024)
             except OSError as e:
-                self._log(e, "read")
+                # _log() hands its argument straight to the log streams, so an
+                # exception object raises TypeError inside this thread, killing
+                # it before it can queue the EOF sentinel below.
+                message = str(e)
+                self._log(message.encode("utf-8") if self.encoding is None else message, "read")
 
             if not buf:
                 # This indicates we have reached EOF
