@@ -4,14 +4,14 @@ Bugs and latent defects found while running a full `ruff` lint pass over the
 repository, later while taking the test suite to 100% line and branch coverage,
 later still while annotating the package for `mypy`, then while getting the
 suite to run clean on 3.10 through 3.14, then in a review pass whose only task
-was to look for defects, and last while making the suite fail on any warning it
-raises. Every entry from the first four was left alone at the time it was
+was to look for defects, then while making the suite fail on any warning it
+raises, and last while moving CI onto the nox sessions. Every entry from the first four was left alone at the time it was
 found, because fixing it would change runtime behaviour and that was out of
 scope for all of them — the lint work was required to be
 behaviour-preserving, the coverage work to add tests rather than change the
 library, and the typing work to add annotations rather than either.
 
-**Twenty-two are now fixed**, and every entry says which it is. Six came from
+**Twenty-eight are now fixed**, and every entry says which it is. Six came from
 the earlier passes: 21, 27, 29 and 30 during the typing pass, because the
 annotations could not describe them without either stating something untrue
 about the code or preserving the defect behind a cast; then 31, which stopped
@@ -27,13 +27,18 @@ filed, each with the test that proves it. What it left alone it
 leaves alone for a reason it states: 40 needs a maintainer's decision about a
 documented contract, 47 is not worth the changelog line, 48 is release tooling,
 and 49 was found during the implementation and has not been through the review
-the rest had. The last two, 51 and 52, are the warnings pass's own and were
-fixed the same way. Entries 1 to 20 and 22 to 26 and 28 are still outstanding.
+the rest had. Then 51 and 52, the warnings pass's own, fixed the same
+way. The last six, 53 to 58, are the CI pass's, and were fixed by the rewrite
+that found them: five of them are defects in how CI and the noxfile were
+configured rather than in anything the library does, and the sixth is what the
+package was shipping. Entries 1 to 20 and 22 to 26 and 28 are still
+outstanding.
 
 Line numbers in the first six sections refer to the tree as of the lint pass and
 were each verified against the source, not inferred from the rule that surfaced
 them; the review pass's own section and the warnings pass's state the current
-ones. The library paths
+ones. The CI pass's cite the tree it replaced, since the lines it quotes from
+`.github/workflows/ci.yml` are lines that no longer exist. The library paths
 are given under `src/pexpect/`, its location since the switch to the src layout;
 that move was a pure rename, so the line numbers are unaffected by it.
 
@@ -1557,7 +1562,7 @@ uv fetches whatever interpreter the runner is missing, and setup-uv's
 of reading the old workflow closely enough to replace it, none of them in the
 library. The first is why the rest went unnoticed: that workflow has not been
 able to finish a run since the move to `pyproject.toml`, four days before this
-pass.
+pass. A sixth, **58**, came out of clearing away what the old CI left behind.
 
 The Coveralls upload and the `finish` job that closed its parallel build are
 gone with it. Coverage is combined by the `collate_coverage` session, as it
@@ -1644,19 +1649,36 @@ finished most recently. It went unnoticed while nothing read the file. CI now
 publishes it, and the name carries the interpreter --
 `reports/mypy-{session.python}.xml`.
 
-### Dead CI configuration left in place
+### 58. The package declared no long description
 
-Not defects, and not numbered. Each of these points at a service that stopped
-building this project years ago, and none of them can be repaired by less work
-than deleting it. Left for a decision rather than taken: removing a service's
-configuration is also how a project loses the record of what used to run it.
+**`pyproject.toml:3`** -- **fixed**
 
-| Location | What |
-|---|---|
-| `.travis.yml` | Python 2.7 through 3.7 and `pypy`, `pip install coveralls`, `--cov-config .coveragerc`. Travis has not run this project since GitHub Actions replaced it in `fe44359` (2022-12-27). |
-| `tools/teamcity-runtests.sh`, `tools/teamcity-coverage-report.sh` | `mkvirtualenv`, `python setup.py install` and `--cov-config .coveragerc`: a virtualenvwrapper, a build backend and a config file the project no longer has. |
-| `coveralls` (`[dependency-groups] dev`) | Installed for a service the only remaining caller of which is `.travis.yml`. Nothing in the noxfile or the workflows invokes it. |
-| `README.rst:1`, `doc/index.rst:4` | A build badge pointing at `travis-ci.org`, which stopped serving anything in 2021. It is the first thing on the project's PyPI page and the first thing in its documentation, and it has been a broken image in both for years. Replacing it means choosing an owner for the Actions URL, which is why it is here rather than done. |
+`[project]` had no `readme`, so the wheel and the sdist carried neither a
+`Description-Content-Type` nor a body: the PyPI page for a release cut from
+this tree would have been metadata and nothing else. Found while deciding
+where the build badge at the top of `README.rst` should point -- that file is
+the project's front page in two places and was shipped in neither.
+
+`readme = "README.rst"` in `0cfa28f`, verified with `twine check` rather than
+by reading the metadata, because an RST body that fails to render is rejected
+at upload time and not at build time. `[project] description`, the one-line
+summary that sits above the body, is still absent.
+
+### Dead CI configuration, since removed
+
+None of these was a defect, and none is numbered. Each pointed at a service
+that stopped building this project years ago, and each named at least one file
+the project no longer has, so none could be repaired by less work than deleting
+it. They were left alone when this section was first written, on the grounds
+that removing a service's configuration is also how a project loses the record
+of what used to run it -- which is what this table is now for.
+
+| What | Gone in | What it was |
+|---|---|---|
+| `.travis.yml` | `b86fced` | Python 2.7 through 3.7 and `pypy`, `pip install coveralls`, `--cov-config .coveragerc`. travis-ci.org stopped serving requests in 2021, and Travis had not built this project since `fe44359` moved CI to GitHub Actions in 2022. |
+| The `travis-ci.org` badge heading `README.rst` and `doc/index.rst` | `b86fced` | A broken image on the repository page and in the documentation, for years. It now points at `karrukola/pexpect`'s own workflow, which is the choice this row used to be waiting on. |
+| `tools/teamcity-runtests.sh`, `tools/teamcity-coverage-report.sh` | `8b49489` | `mkvirtualenv`, `python setup.py install` and `--cov-config .coveragerc`: a virtualenvwrapper, a build backend and a config file the project no longer has. No TeamCity build configuration accompanied them into the repository, so what they were wired into is not something the checkout can say. |
+| `coveralls` (`[dependency-groups] dev`) | `26dbbb2` | Installed for a service whose only callers were the two rows above. Nothing in the noxfile or the workflow ever invoked it, and dropping it takes twelve packages out of every environment nox builds. |
 
 ---
 
