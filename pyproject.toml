@@ -86,7 +86,17 @@ default = true
 run.omit = [  "noxfile.py" ]
 run.parallel = true
 run.plugins = [ "covdefaults" ]
-run.source = ["pexpect"]
+# source_pkgs, not source: a bare "pexpect" in `source` is taken as a directory
+# whenever one of that name exists next to the config, and only as a package
+# when it does not. Under the src layout the package is src/pexpect, so a stray
+# ./pexpect/ would silently measure nothing while every child process -- which
+# runs from tests/, where the directory is not visible -- measured the real
+# thing. source_pkgs always means "import it and measure where it landed".
+run.source_pkgs = ["pexpect"]
+# Empty, but present: covdefaults substitutes source = ["."] when `source` is
+# unset, which would measure tests/ and noxfile.py alongside the library and
+# make report.fail_under a statement about the suite instead of about pexpect.
+run.source = []
 # ref: https://coverage.readthedocs.io/en/latest/excluding.html
 report.exclude_also = [
     "@(abc\\.)?abstractmethod",
