@@ -165,25 +165,81 @@ class PxsshLoginTestCase(SSHTestBase):
     def test_login_bash(self) -> None:
         """Log in to a fake server running bash and exchange a ping."""
         ssh = pxssh.pxssh()
-        ssh.login("server bash", "me", password=FAKE_PW, sync_multiplier=_SYNC_MULTIPLIER)
+        ssh.login(
+            "server",
+            "me",
+            password=FAKE_PW,
+            sync_multiplier=_SYNC_MULTIPLIER,
+            cmd="ssh -s bash",
+        )
         ssh.sendline("ping")
         ssh.expect("pong", timeout=10)
         assert ssh.prompt(timeout=10)
         ssh.logout()
 
     def test_login_zsh(self) -> None:
-        """Log in to a fake server running zsh and exchange a ping."""
+        """Log in to a fake server running zsh and exchange a ping.
+
+        The mock is told to speak zsh with ``-s``, a test-only option (see
+        ``tests/fakessh/ssh``): ``server`` is now quoted by pxssh, so the old
+        trick of naming the shell as a second word in the server argument
+        ("server zsh") arrives as a single, unsplit hostname and no longer
+        reaches the mock's shell selection.
+        """
         ssh = pxssh.pxssh()
-        ssh.login("server zsh", "me", password=FAKE_PW, sync_multiplier=_SYNC_MULTIPLIER)
+        ssh.login(
+            "server",
+            "me",
+            password=FAKE_PW,
+            sync_multiplier=_SYNC_MULTIPLIER,
+            cmd="ssh -s zsh",
+        )
         ssh.sendline("ping")
         ssh.expect("pong", timeout=10)
         assert ssh.prompt(timeout=10)
         ssh.logout()
 
     def test_login_tcsh(self) -> None:
-        """Log in to a fake server running tcsh and exchange a ping."""
+        """Log in to a fake server running tcsh and exchange a ping.
+
+        See :meth:`test_login_zsh` for why the shell is selected through
+        ``cmd="ssh -s tcsh"`` rather than a second word in the server name.
+        """
         ssh = pxssh.pxssh()
-        ssh.login("server tcsh", "me", password=FAKE_PW, sync_multiplier=_SYNC_MULTIPLIER)
+        ssh.login(
+            "server",
+            "me",
+            password=FAKE_PW,
+            sync_multiplier=_SYNC_MULTIPLIER,
+            cmd="ssh -s tcsh",
+        )
+        ssh.sendline("ping")
+        ssh.expect("pong", timeout=10)
+        assert ssh.prompt(timeout=10)
+        ssh.logout()
+
+    def test_login_with_a_space_in_the_server_name_is_not_split(self) -> None:
+        """A server name with a space must reach the mock as one hostname.
+
+        Given a server name that starts with the sentinel the mock refuses
+        ("noserver") followed by a space and more text,
+        When login() is called,
+        Then the whole string arrives at the mock as a single hostname --
+        distinct from the bare sentinel -- so the mock does not refuse the
+        connection.
+
+        Before ``server`` was quoted, the space would have split this into
+        the literal hostname "noserver" plus a bogus positional shell name,
+        and the mock's exact-match refusal ("No route to host") would have
+        fired instead of a normal login.
+        """
+        ssh = pxssh.pxssh()
+        ssh.login(
+            "noserver etc",
+            "me",
+            password=FAKE_PW,
+            sync_multiplier=_SYNC_MULTIPLIER,
+        )
         ssh.sendline("ping")
         ssh.expect("pong", timeout=10)
         assert ssh.prompt(timeout=10)

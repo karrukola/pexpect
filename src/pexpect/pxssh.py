@@ -323,7 +323,7 @@ class pxssh(spawn[bytes]):
         if spawn_local_ssh and not Path(str(ssh_key)).is_file():
             msg = "private ssh key does not exist or is not a file."
             raise ExceptionPxssh(msg)
-        return f" -i {ssh_key}"
+        return f" -i {quote(str(ssh_key))}"
 
     @staticmethod
     def _ssh_tunnel_options(ssh_tunnels: dict, *, spawn_local_ssh: bool) -> str:
@@ -371,7 +371,7 @@ class pxssh(spawn[bytes]):
             if spawn_local_ssh and not Path(ssh_config).is_file():
                 msg = "SSH config does not exist or is not a file."
                 raise ExceptionPxssh(msg)
-            ssh_options += " -F " + ssh_config
+            ssh_options += " -F " + quote(ssh_config)
         if port is not None:
             ssh_options += f" -p {port!s}"
         if ssh_key is not None:
@@ -550,7 +550,7 @@ class pxssh(spawn[bytes]):
         )
 
         if username is not None:
-            ssh_options = ssh_options + " -l " + username
+            ssh_options = ssh_options + " -l " + quote(username)
         elif ssh_config is None:
             msg = "login() needs either a username or an ssh_config"
             raise TypeError(msg)
@@ -558,7 +558,7 @@ class pxssh(spawn[bytes]):
             # make sure ssh_config has an entry for the server with a username
             self._check_ssh_config_username(ssh_config, server)
 
-        cmd += f" {ssh_options} {server}"
+        cmd += f" {ssh_options} {quote(server)}"
         if self.debug_command_string:
             return cmd
 

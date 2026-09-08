@@ -7,9 +7,12 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from shlex import quote
 from unittest import mock
 
 import pytest
+
+from pexpect.utils import split_command_line
 
 if sys.platform != "win32":
     from pexpect import pxssh
@@ -348,6 +351,69 @@ class PxsshTestCase(SSHTestBase):
         if confirmation_strings != len(confirmation_array):
             msg = "String generated from adding an SSH key is incorrect."
             raise AssertionError(msg)
+
+    def test_server_with_a_shell_metacharacter_is_quoted(self) -> None:
+        """Quote a server name so a shell metacharacter cannot start a second command.
+
+        Given a server name containing a ``;``,
+        When the ssh command line is built,
+        Then the server appears quoted rather than as bare text a remote
+        shell could split into two commands.
+        """
+        ssh = pxssh.pxssh(debug_command_string=True)
+        server = "host; touch /tmp/pwned"
+        string = ssh.login(server, "me", password=FAKE_PW, ssh_key=True)
+        assert isinstance(string, str)
+        assert string.endswith(" " + quote(server))
+        assert not string.endswith(" " + server)
+
+    def test_server_with_a_space_is_quoted(self) -> None:
+        """Quote a server name containing a space.
+
+        Given a server name with a space in it,
+        When the ssh command line is built,
+        Then the server appears quoted, and split_command_line() reads it
+        back as a single argv entry instead of splitting it into a
+        hostname and a shell.
+        """
+        ssh = pxssh.pxssh(debug_command_string=True)
+        server = "two words"
+        string = ssh.login(server, "me", password=FAKE_PW)
+        assert isinstance(string, str)
+        assert string.endswith(" " + quote(server))
+        assert split_command_line(string)[-1] == server
+
+    def test_username_with_a_space_is_quoted(self) -> None:
+        """Quote a username containing a space.
+
+        Given a username with a space in it,
+        When the ssh command line is built,
+        Then the username is quoted, and split_command_line() reads it
+        back as a single argv entry instead of splitting it in two.
+        """
+        ssh = pxssh.pxssh(debug_command_string=True)
+        username = "user name"
+        string = ssh.login("server", username, password=FAKE_PW)
+        assert isinstance(string, str)
+        assert " -l " + quote(username) in string
+        assert username in split_command_line(string)
+
+    def test_ssh_key_path_with_a_space_is_quoted(self) -> None:
+        """Quote a private key path containing a space.
+
+        Given a private key path under a directory whose name has a space,
+        When the ssh command line is built,
+        Then the path is quoted, and split_command_line() reads it back as
+        a single argv entry instead of splitting it in two.
+        """
+        ssh = pxssh.pxssh(debug_command_string=True)
+        with tempfile.TemporaryDirectory(suffix=" with space") as tempdir:
+            ssh_key = str(Path(tempdir) / "id_rsa")
+            Path(ssh_key).touch()
+            string = ssh.login("server", "me", password=FAKE_PW, ssh_key=ssh_key)
+        assert isinstance(string, str)
+        assert " -i " + quote(ssh_key) in string
+        assert ssh_key in split_command_line(string)
 
     def test_custom_ssh_cmd_debug(self) -> None:
         """Keep a custom ssh client command and its options in the built command."""

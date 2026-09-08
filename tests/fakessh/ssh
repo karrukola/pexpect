@@ -24,8 +24,13 @@ try:
     cipher_list = []
     fullCmdArguments = sys.argv
     argumentList = fullCmdArguments[1:]
-    unixOptions = "2qVc:l:"
+    # -s is not a real ssh option. It is a test-only knob that lets a caller
+    # select the mock's remote shell without relying on a second positional
+    # argument, which a quoted server name (see pxssh's shlex.quote of
+    # `server`) can no longer smuggle in.
+    unixOptions = "2qVc:l:s:"
     arguments, values = getopt.getopt(argumentList, unixOptions)
+    shell = None
     for currentArgument, currentValue in arguments:
         if currentArgument in ("-2"):
             pass
@@ -39,15 +44,18 @@ try:
                 if cipher_item not in cipher_valid_list:
                     print("Unknown cipher type '" + str(cipher_item) + "'")
                     sys.exit(1)
+        elif currentArgument in ("-s"):
+            shell = currentValue
 
     server = values[0]
     if server == 'noserver':
         print('No route to host')
         sys.exit(1)
 
-    shell = 'bash'
-    if len(values) > 1:
-        shell = values[1]
+    if shell is None:
+        shell = 'bash'
+        if len(values) > 1:
+            shell = values[1]
 
 except Exception as e:
     print(ssh_usage)
