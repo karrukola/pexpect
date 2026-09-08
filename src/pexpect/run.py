@@ -38,7 +38,7 @@ def _events_to_patterns(
 
 @overload
 def run(
-    command: str | list[str],
+    command: str,
     timeout: float | None = 30,
     withexitstatus: Literal[False] = False,
     events: _Events | None = None,
@@ -52,7 +52,7 @@ def run(
 
 @overload
 def run(
-    command: str | list[str],
+    command: str,
     timeout: float | None = 30,
     withexitstatus: Literal[True] = ...,
     events: _Events | None = None,
@@ -66,7 +66,7 @@ def run(
 
 @overload
 def run(
-    command: str | list[str],
+    command: str,
     timeout: float | None = 30,
     withexitstatus: bool = ...,
     events: _Events | None = None,
@@ -79,7 +79,7 @@ def run(
 
 
 def run(
-    command: str | list[str],
+    command: str,
     timeout: float | None = 30,
     withexitstatus: bool = False,  # positional flag is public API
     events: _Events | None = None,
@@ -241,7 +241,7 @@ def run(
 
 @overload
 def runu(
-    command: str | list[str],
+    command: str,
     timeout: float | None = 30,
     withexitstatus: Literal[False] = False,
     events: _Events | None = None,
@@ -255,7 +255,7 @@ def runu(
 
 @overload
 def runu(
-    command: str | list[str],
+    command: str,
     timeout: float | None = 30,
     withexitstatus: Literal[True] = ...,
     events: _Events | None = None,
@@ -269,7 +269,7 @@ def runu(
 
 @overload
 def runu(
-    command: str | list[str],
+    command: str,
     timeout: float | None = 30,
     withexitstatus: bool = ...,
     events: _Events | None = None,
@@ -282,7 +282,7 @@ def runu(
 
 
 def runu(
-    command: str | list[str],
+    command: str,
     timeout: float | None = 30,
     withexitstatus: bool = False,  # positional flag is public API
     events: _Events | None = None,
