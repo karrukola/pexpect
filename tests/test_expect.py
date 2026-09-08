@@ -635,6 +635,27 @@ class ExpectTestCase(pexpect_test_case.PexpectTestCase):
         def noop(_signum: int, _frame: FrameType | None) -> None:
             pass
 
+        original = signal.getsignal(signal.SIGALRM)
+
+        def restore() -> None:
+            """Take the alarm back off the process, in the only safe order.
+
+            The timer is cancelled before the handler goes back, because an
+            alarm still pending once SIGALRM is at its default disposition
+            terminates the test runner.
+            """
+            signal.setitimer(signal.ITIMER_REAL, 0)
+            signal.signal(signal.SIGALRM, original)
+
+        # SIGALRM and ITIMER_REAL are process-wide, and both are already spoken
+        # for: pytest-timeout's signal method is what puts this suite's per-test
+        # budget on them. Overwriting them is what the test is for -- it costs
+        # this one test its timeout, from the 10 ms below until the item ends --
+        # but it must not cost the next one, which the shuffle picks at random.
+        # pytest-timeout happens to reset SIGALRM to SIG_DFL after every item,
+        # so today the handler would not in fact escape; restoring it here is
+        # what makes that a coincidence rather than the mechanism.
+        self.addCleanup(restore)
         signal.signal(signal.SIGALRM, noop)
 
         p1 = pexpect.spawn(f"{self.PYTHONBIN} sleep_for.py 0.03", timeout=5)
