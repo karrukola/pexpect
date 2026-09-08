@@ -1,5 +1,11 @@
 name: CI
 
+# Every job here names a nox session and nothing else. The interpreter matrix lives
+# in .python-versions, which the noxfile reads to parameterise its sessions; nox
+# then builds one environment per entry with uv, which downloads any interpreter the
+# runner does not already have. Adding 3.15 to the matrix is an edit to that one
+# file, and nothing in this workflow has to follow it.
+
 on:
   push:
     branches: [ master ]
@@ -8,59 +14,93 @@ on:
 
 env:
   FORCE_COLOR: 1
+  # nox's own default, stated here because this workflow leans on it: an interpreter
+  # the runner lacks is fetched rather than skipped. Silence is not an option either
+  # way -- nox turns a missing interpreter into an error whenever CI is set, so
+  # without the download the run would fail rather than quietly test fewer versions.
+  # ref: https://nox.thea.codes/en/stable/usage.html#opt-error-on-missing-interpreters
+  NOX_DOWNLOAD_PYTHON: auto
+
+permissions:
+  contents: read
 
 jobs:
-  test:
-    name: Test Python ${{ matrix.python-version }} on ${{ matrix.os }}
-    runs-on: ${{ matrix.os }}
-    strategy:
-      fail-fast: false
-      matrix:
-        os: ["ubuntu-22.04"]
-        python-version: ["3.7", "3.8", "3.9", "3.10", "3.11", "3.12", "pypy3.9"]
-        include:
-          # Python < 3.7 is not available on ubuntu-22.04
-          - os: "ubuntu-20.04"
-            python-version: "3.6"
-
-    steps:
-    - uses: actions/checkout@v4
-
-    - name: Set up Python ${{ matrix.python-version }}
-      uses: actions/setup-python@v4
-      with:
-        python-version: ${{ matrix.python-version }}
-        allow-prereleases: true
-
-    - name: Install packages
-      run: |
-        sudo apt-get install --yes zsh
-        export PYTHONIOENCODING=UTF8
-        pip install -r requirements-testing.txt
-
-    - name: Run tests
-      run: |
-        ./tools/display-sighandlers.py
-        ./tools/display-terminalinfo.py
-        pytest --cov pexpect --cov-config .coveragerc
-
-    - name: Coveralls
-      if: github.repository_owner == 'pexpect'
-      uses: coverallsapp/github-action@master
-      with:
-        github-token: ${{ secrets.GITHUB_TOKEN }}
-        flag-name: ${{matrix.os}}-node-${{ matrix.node }}
-        parallel: true
-
-
-  finish:
-    needs: test
+  lint:
+    name: Lint
     runs-on: ubuntu-latest
-    steps:
-      - name: Coveralls Finished
-        if: github.repository_owner == 'pexpect'
-        uses: coverallsapp/github-action@master
-        with:
-          github-token: ${{ secrets.GITHUB_TOKEN }}
-          parallel-finished: true
 
+    steps:
+    - uses: actions/checkout@v5
+      with:
+        # setuptools_scm derives the version from git and uv installs the project
+        # into every environment nox builds, so a checkout without tags turns the
+        # version into a guess.
+        fetch-depth: 0
+
+    # Pinned by commit, with the version beside it, because setup-uv publishes no
+    # floating major tag to follow -- the action's own documentation pins this way.
+    - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+      with:
+        # uv's wheel cache is cached on GitHub-hosted runners by default;
+        # cache-python adds the interpreters uv downloads, which are the bulk of a
+        # cold run. Both keys carry the hash of the files named below, so a change
+        # to the lock or to the matrix starts a fresh cache rather than restoring
+        # one that is missing half of what the run needs.
+        cache-python: true
+        cache-dependency-glob: |
+          uv.lock
+          .python-versions
+
+    - name: nox -s lint
+      run: uv run --locked nox -s lint
+
+    - name: Publish the type-check reports
+      if: ${{ !cancelled() }}
+      uses: actions/upload-artifact@v4
+      with:
+        name: mypy-reports
+        path: reports/
+
+  test:
+    name: Test
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v5
+      with:
+        fetch-depth: 0
+
+    - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+      with:
+        cache-python: true
+        cache-dependency-glob: |
+          uv.lock
+          .python-versions
+
+    # zsh is not on the runner, and replwrap's two zsh tests skip themselves without
+    # it -- quietly, after which the code they cover drops coverage under the 100%
+    # floor. man-db comes along because test_pager_as_cat reads `man sleep` with no
+    # skip guard; that test has been passing on these runners since CI moved here, so
+    # the page is present, but a test's dependency is better installed than
+    # inherited -- and `man --where sleep` is what notices if that ever changes.
+    - name: Install the programs the suite drives
+      run: |
+        sudo apt-get update
+        sudo apt-get install --yes --no-install-recommends man-db zsh
+        man --where sleep
+
+    # One session per interpreter, each measuring coverage; the collate_coverage
+    # session it notifies combines them and writes the XML and HTML published below.
+    # The 100% floor is report.fail_under in pyproject.toml, so a regression fails
+    # this step rather than waiting for a reviewer to read an artifact.
+    - name: nox -s test
+      run: uv run --locked nox -s test
+
+    - name: Publish the coverage reports
+      if: ${{ !cancelled() }}
+      uses: actions/upload-artifact@v4
+      with:
+        name: coverage-reports
+        path: |
+          coverage-reports/
+          htmlcov/

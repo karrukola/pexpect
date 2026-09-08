@@ -1,15 +1,10 @@
-"""Nox sessions used to lint the pexpect project."""
+"""Nox sessions used to lint and test the pexpect project."""
 
 from __future__ import annotations
 
-import os
 from pathlib import Path
 
 import nox
-
-# ref: https://nox.thea.codes/en/stable/usage.html#opt-error-on-missing-interpreters
-_ON_CI = os.getenv("CI") is not None
-
 
 nox.options.error_on_external_run = True
 nox.options.default_venv_backend = "uv"
