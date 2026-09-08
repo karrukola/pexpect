@@ -198,12 +198,17 @@ lint.per-file-ignores."src/pexpect/spawnbase.py" = [
 ]
 
 [tool.pytest]
-# Starting a child process costs about 50 ms, and every test outside
-# tests/integration drives one. 150 ms leaves headroom over the slowest of them
-# while still catching a hang or a real sleep that escaped tests/conftest.py.
-addopts = [
-    "--timeout=0.15"  # [seconds], enforced by pytest-timeout plugin
-]
+# No --timeout here on purpose. The per-test budget is a number of child
+# processes rather than a number of seconds, because starting one is what a test
+# outside tests/integration mostly costs and how long that takes is a property
+# of the machine: on the hardware the suite was written on it is about 50 ms and
+# the slowest test 80 ms, while on an aarch64 SBC the same child costs 290 ms
+# and the same test 1.2 s. A fixed 150 ms means "no test may hang" on the first
+# machine and "no test may run at all" on the second.
+#
+# So tests/conftest.py measures one child at collection time and marks each test
+# with the budget that earns, never going below the 150 ms this suite was
+# written to. tests/integration/conftest.py sets its own, generous budget.
 
 
 [tool.mypy]

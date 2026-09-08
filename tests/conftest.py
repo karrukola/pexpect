@@ -20,23 +20,35 @@ The second is the garbage collector. A spawn that a test simply drops is closed
 by its ``__del__`` whenever the collector reaches it, which is typically during
 some later test, so the signals and settling delays of one test's teardown are
 charged to another test's budget. ``killed_pty_children`` closes that gap.
+
+What neither of them can reach is the child process itself. ``spawn`` execs it,
+and no monkeypatching survives an exec, so what a test outside tests/integration
+costs is however long this machine takes to fork a pty, exec a program into it
+and reap it, once per child. That figure is hardware, not something the suite
+can choose, and it is why the per-test budget is measured here rather than
+written down: see ``pytest_collection_modifyitems``.
 """
 
 from __future__ import annotations
 
 import contextlib
 import os
+import pathlib
 import signal
+import time
 from typing import TYPE_CHECKING
 
 import pytest
 from pytest_time.instant_sleep import InstantSleep
 
+import pexpect
 from pexpect import pty_spawn
 
 if TYPE_CHECKING:
-    import pathlib
     from collections.abc import Callable, Iterator
+
+# tests/integration budgets itself; see pytest_collection_modifyitems below.
+_SLOW_DIR = pathlib.Path(__file__).parent / "integration"
 
 # Sleeps at least this long are the ones that follow a signal: pexpect and
 # ptyprocess both settle on 0.1 s for delayafterclose and delayafterterminate.
@@ -52,6 +64,30 @@ _SETTLING_SLEEP = 0.1
 _YIELD_SECONDS = 0.01
 
 
+# The per-test budget is this many child processes' worth of time. The most any
+# one test outside tests/integration drives is six -- test_misc's
+# test_read_after_close_raises_value_error spawns and closes `cat` once per read
+# method -- and the rest is headroom, so a test that leaks a real sleep or hangs
+# still fails rather than passing slowly.
+_CHILDREN_PER_TEST = 6
+
+# Never tighter than this, however fast the machine measures. 150 ms is the
+# figure the suite was written to, and on the hardware it was written on the
+# slowest test took 80 ms; a machine quick enough to beat the floor gains
+# nothing from a budget below it.
+_BUDGET_FLOOR = 0.15
+
+# How many times to time a child before believing the answer. The smallest is
+# taken: a budget should follow what the machine can do, not what it happened to
+# be doing while another process had the CPU.
+_CALIBRATION_RUNS = 3
+
+# What to spawn to measure one child. `cat` is what most of these tests drive,
+# it is on every POSIX system, and it starts without reading a config or an
+# interpreter, so it measures the fork/exec/pty floor and not a program.
+_CALIBRATION_COMMAND = "cat"
+
+
 class _YieldingSleep(InstantSleep):
     """Instant sleep that still lets the kernel act on a signal."""
 
@@ -60,6 +96,50 @@ class _YieldingSleep(InstantSleep):
         super().sleep(secs)
         if secs >= _SETTLING_SLEEP:
             self._time.sleep(_YIELD_SECONDS)
+
+
+def _time_one_child() -> float:
+    """Return the seconds one spawn-and-close of ``_CALIBRATION_COMMAND`` took."""
+    started = time.perf_counter()
+    child = pty_spawn.spawn(_CALIBRATION_COMMAND)
+    child.close()
+    return time.perf_counter() - started
+
+
+def _measured_budget() -> float:
+    """Return the per-test time budget this machine has earned, in seconds.
+
+    A test outside tests/integration costs one or more child processes plus its
+    own logic, and the child is the part that cannot be faked away, so the
+    budget is stated in children and the cost of one is measured here. The
+    measurement runs under the same sleep regime the tests do -- see
+    ``fast_sleep`` -- because otherwise it would be timing pexpect's settling
+    delays, which no test outside that directory ever pays in full.
+    """
+    with pytest.MonkeyPatch.context() as patcher:
+        _YieldingSleep().install(patcher)
+        try:
+            cost = min(_time_one_child() for _ in range(_CALIBRATION_RUNS))
+        except (OSError, pexpect.ExceptionPexpect):
+            # No child could be started at all, which every test here is about
+            # to report far more clearly than a timeout would.
+            return _BUDGET_FLOOR
+    return max(_BUDGET_FLOOR, _CHILDREN_PER_TEST * cost)
+
+
+def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
+    """Give every test outside tests/integration a budget scaled to this machine.
+
+    tests/integration sets its own, generous budget from its own conftest, and
+    is skipped here rather than being marked twice: which of two markers on one
+    item ``pytest-timeout`` reads is not something to depend on.
+    """
+    timed = [item for item in items if _SLOW_DIR not in item.path.parents]
+    if not timed:
+        return
+    budget = _measured_budget()
+    for item in timed:
+        item.add_marker(pytest.mark.timeout(budget))
 
 
 @pytest.fixture
