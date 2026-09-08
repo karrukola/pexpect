@@ -1,8 +1,14 @@
-"""Tests for pattern preference in expect(), driven by a Python child.
+"""Tests for expect() that need more of the machine than a plain child process.
 
-Each of these starts one or two Python interpreters, and the REPL tests then
-walk five statements through one. That is above the suite's time budget before
-pexpect does anything, so they live here.
+Most of these start one or two Python interpreters, and the REPL tests then walk
+five statements through one. That is above the suite's time budget before pexpect
+does anything.
+
+``test_before_across_chunks`` is here for the other reason: it needs bulk output
+to accumulate `before` over, and gets it from ``openssl rand``, piped through
+``head`` and ``nl``. openssl is not a program this repository ships or can
+assume, so the test is collected here rather than budgeted as though it drove
+nothing but a child process.
 """
 
 from __future__ import annotations
@@ -26,9 +32,12 @@ if TYPE_CHECKING:
 
 pytestmark = pytest.mark.usefixtures("fast_sleep", "lean_child_env")
 
+# `head -500` in the command spawned by test_before_across_chunks.
+_HEAD_LINES = 500
+
 
 class ExpectTestCase(pexpect_test_case.PexpectTestCase):
-    """Tests for which of several overlapping patterns expect() returns."""
+    """Tests for what expect() returns, and for what it leaves in `before`."""
 
     def _greed(self, expect: _Matcher) -> None:
         # End at the same point: the one with the earliest start should win
@@ -108,6 +117,23 @@ class ExpectTestCase(pexpect_test_case.PexpectTestCase):
         p = pexpect.spawn(self.PYTHONBIN)
         # drive the helper with expect_exact() instead
         self._ordering(p, p.expect_exact)
+
+    def test_before_across_chunks(self) -> None:
+        """Accumulate `before` across many reads, larger than searchwindowsize.
+
+        See https://github.com/pexpect/pexpect/issues/478.
+        """
+        child = pexpect.spawn(
+            '/bin/sh -c "openssl rand -base64 '
+            f"{1024 * 1024 * 2} 2>/dev/null | head -{_HEAD_LINES} | nl -n rz -w 5 2>&1 ; "
+            "echo 'PATTERN!!!'\"",
+            searchwindowsize=128,
+        )
+        child.expect(["PATTERN"])
+        assert isinstance(child.before, bytes)
+        assert len(child.before.splitlines()) == _HEAD_LINES
+        assert child.after == b"PATTERN"
+        assert child.buffer == b"!!!\r\n"
 
 
 if __name__ == "__main__":

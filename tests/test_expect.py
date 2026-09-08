@@ -70,9 +70,6 @@ else:
 # repr() of a printable character is three characters long: quote, char, quote.
 _PRINTABLE_REPR_LEN = 3
 
-# `head -500` in the command spawned by test_before_across_chunks.
-_HEAD_LINES = 500
-
 FILTER = "".join(chr(x) if len(repr(chr(x))) == _PRINTABLE_REPR_LEN else "." for x in range(256))
 
 
@@ -469,23 +466,6 @@ class ExpectTestCase(pexpect_test_case.PexpectTestCase):
         assert len(p.buffer) > 0
         p.buffer = b"Testing"
         p.sendeof()
-
-    def test_before_across_chunks(self) -> None:
-        """Accumulate `before` across many reads, larger than searchwindowsize.
-
-        See https://github.com/pexpect/pexpect/issues/478.
-        """
-        child = pexpect.spawn(
-            '/bin/sh -c "openssl rand -base64 '
-            f"{1024 * 1024 * 2} 2>/dev/null | head -{_HEAD_LINES} | nl -n rz -w 5 2>&1 ; "
-            "echo 'PATTERN!!!'\"",
-            searchwindowsize=128,
-        )
-        child.expect(["PATTERN"])
-        assert isinstance(child.before, bytes)
-        assert len(child.before.splitlines()) == _HEAD_LINES
-        assert child.after == b"PATTERN"
-        assert child.buffer == b"!!!\r\n"
 
     def _before_after(self, p: pexpect.spawn[bytes], expect: _Matcher) -> None:
         p.timeout = 5
