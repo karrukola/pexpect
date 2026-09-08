@@ -438,6 +438,48 @@ class ScreenTestCase(pexpect_test_case.PexpectTestCase):
         s.erase_up()
         assert str(s) == "  \n .\n.."
 
+    def test_erase_up_top_row(self) -> None:
+        """Erase up from the top row without erasing past the cursor.
+
+        Given a 3x6 screen filled with dots and the cursor on row 1, column 3,
+        When :meth:`screen.screen.erase_up` is called,
+        Then only the start of row 1 up to the cursor becomes spaces, the rest
+        of row 1 keeps its dots, and rows 2 and 3 are untouched.
+        """
+        s = screen.screen(3, 6)
+        s.fill(".")
+        s.cursor_home(1, 3)
+        s.erase_up()
+        assert str(s) == "   ...\n......\n......"
+
+    def test_erase_down(self) -> None:
+        """Erase from the cursor down to the bottom of the screen.
+
+        Given a 3x2 screen filled with dots and the cursor at row 2, column 2,
+        When :meth:`screen.screen.erase_down` is called,
+        Then the end of row 2 and all of row 3 become spaces and row 1 is
+        untouched.
+        """
+        s = screen.screen(3, 2)
+        s.fill(".")
+        s.cursor_home(2, 2)
+        s.erase_down()
+        assert str(s) == "..\n. \n  "
+
+    def test_erase_down_bottom_row(self) -> None:
+        """Erase down from the bottom row without erasing before the cursor.
+
+        Given a 3x6 screen filled with dots and the cursor on row 3, column 3,
+        When :meth:`screen.screen.erase_down` is called,
+        Then only row 3 from the cursor onward becomes spaces, the start of
+        row 3 keeps its dots, and rows 1 and 2 are untouched.
+        """
+        s = screen.screen(3, 6)
+        s.fill(".")
+        s.cursor_home(3, 3)
+        s.erase_down()
+        assert str(s) == "......\n......\n..    "
+
 
 if __name__ == "__main__":
     unittest.main()

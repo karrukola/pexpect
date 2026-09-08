@@ -369,12 +369,14 @@ class screen:
     def erase_down(self) -> None:  # <ESC>[0J -or- <ESC>[J
         """Erase the screen from the current line down to the bottom of the screen."""
         self.erase_end_of_line()
-        self.fill_region(self.cur_r + 1, 1, self.rows, self.cols)
+        if self.cur_r < self.rows:
+            self.fill_region(self.cur_r + 1, 1, self.rows, self.cols)
 
     def erase_up(self) -> None:  # <ESC>[1J
         """Erase the screen from the current line up to the top of the screen."""
         self.erase_start_of_line()
-        self.fill_region(self.cur_r - 1, 1, 1, self.cols)
+        if self.cur_r > 1:
+            self.fill_region(self.cur_r - 1, 1, 1, self.cols)
 
     def erase_screen(self) -> None:  # <ESC>[2J
         """Erases the screen with the background color."""
