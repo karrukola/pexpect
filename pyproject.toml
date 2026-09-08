@@ -58,6 +58,7 @@ dev = [
     "pytest>=9.1.1",
     "pytest-cov>=7.1.0",
     "pytest-html>=4.2.0",
+    "pytest-randomly>=5.0.0",
     "pytest-time>=0.5.0",
     "pytest-timeout>=2.4.0",
     "ruff>=0.16.6",
