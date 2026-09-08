@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import codecs
+import contextlib
 import errno
 import os
 import re
@@ -812,6 +813,36 @@ class SpawnBase(Generic[AnyStr]):
     def isatty(self) -> bool:
         """Overridden in subclass using tty."""
         return False
+
+    def _close_async_transport(self) -> None:
+        """Release the asyncio transport an awaited expect() left bound, if any.
+
+        ``expect_async`` binds one read transport per spawn and keeps it, so
+        that the next await resumes reading rather than building another; see
+        :attr:`async_pw_transport`. Nothing else unbinds it, so a spawn that
+        was awaited and then closed would leave the transport to asyncio's
+        finalizer, which reports it as an unclosed transport -- a
+        ResourceWarning charged to whatever code happened to trigger the
+        collection, rather than to the spawn that leaked it.
+
+        Every concrete ``close()`` calls this before it releases the
+        descriptor, because closing the transport is what takes the event
+        loop's reader off that descriptor.
+        """
+        if self.async_pw_transport is None:
+            return
+        transport = self.async_pw_transport[1]
+        # Unbound before the close, not after: closing the transport ends in
+        # asyncio calling this spawn's close() a second time -- the "pipe" the
+        # transport was opened on is the spawn object itself -- and that call
+        # has to find nothing left to release here.
+        self.async_pw_transport = None
+        # A transport that outlived its event loop cannot be closed through:
+        # close() schedules the callback that releases the pipe, and scheduling
+        # on a closed loop raises. Closing the loop already dropped the reader,
+        # so the descriptor is ours alone by then either way.
+        with contextlib.suppress(RuntimeError):
+            transport.close()
 
     if TYPE_CHECKING:
 

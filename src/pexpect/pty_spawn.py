@@ -455,6 +455,7 @@ class spawn(SpawnBase[AnyStr]):
         make sure that the child is terminated (SIGKILL is sent if the child
         ignores SIGHUP and SIGINT).
         """
+        self._close_async_transport()
         self.flush()
         with _wrap_ptyprocess_err():
             # PtyProcessError may be raised if it is not possible to terminate

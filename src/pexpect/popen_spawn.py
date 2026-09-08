@@ -334,6 +334,7 @@ class PopenSpawn(SpawnBase[AnyStr]):
         if self.closed:
             return
 
+        self._close_async_transport()
         self.flush()
         cast("IO[bytes]", self.proc.stdin).close()
 

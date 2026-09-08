@@ -112,6 +112,7 @@ class SocketSpawn(SpawnBase[AnyStr]):
         if self.child_fd == -1:
             return
 
+        self._close_async_transport()
         self.flush()
         self.socket.shutdown(socket.SHUT_RDWR)
         self.socket.close()

@@ -140,6 +140,7 @@ class fdspawn(SpawnBase[AnyStr]):
         if self.child_fd == -1:
             return
 
+        self._close_async_transport()
         self.flush()
         os.close(self.child_fd)
         self.child_fd = -1
