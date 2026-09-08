@@ -54,9 +54,27 @@ class ExpectTestCase(pexpect_test_case.PexpectTestCase):
         )
         return proc.communicate()[0].rstrip()
 
+    def _spawn(self, cmd: str | list[str], timeout: float | None = 30) -> PopenSpawn[bytes]:
+        """Return a PopenSpawn on *cmd* that is closed when the test ends.
+
+        Nothing else closes one. A PopenSpawn holds two pipes and a reader
+        thread, and dropping it leaves all three to the garbage collector,
+        which reports them as unclosed files and a still-running subprocess --
+        against whichever later test happened to trigger the collection. The
+        lingering reader thread is the more expensive half: a multi-threaded
+        process cannot fork without a DeprecationWarning, so one abandoned
+        spawn here makes every child a later module starts warn.
+
+        close() is safe to reach for a second time, so a test is free to close
+        the spawn itself and let this cleanup find the work already done.
+        """
+        p = PopenSpawn(cmd, timeout=timeout)
+        self.addCleanup(p.close)
+        return p
+
     def test_expect_basic(self) -> None:
         """Match successive lines echoed back by ``cat``."""
-        p = PopenSpawn("cat", timeout=5)
+        p = self._spawn("cat", timeout=5)
         p.sendline(b"Hello")
         p.sendline(b"there")
         p.sendline(b"Mr. Python")
@@ -68,7 +86,7 @@ class ExpectTestCase(pexpect_test_case.PexpectTestCase):
 
     def test_expect_exact_basic(self) -> None:
         """Match successive lines echoed back by ``cat`` using expect_exact."""
-        p = PopenSpawn("cat", timeout=5)
+        p = self._spawn("cat", timeout=5)
         p.sendline(b"Hello")
         p.sendline(b"there")
         p.sendline(b"Mr. Python")
@@ -81,7 +99,7 @@ class ExpectTestCase(pexpect_test_case.PexpectTestCase):
     def test_expect(self) -> None:
         """Read a child line by line and recover the same bytes subprocess sees."""
         the_old_way = self._ls_bin()
-        p = PopenSpawn("ls -l /bin")
+        p = self._spawn("ls -l /bin")
         the_new_way = b""
         while 1:
             i = p.expect([b"\n", pexpect.EOF])
@@ -96,7 +114,7 @@ class ExpectTestCase(pexpect_test_case.PexpectTestCase):
     def test_expect_exact(self) -> None:
         """Read a child line by line with expect_exact, treating metacharacters literally."""
         the_old_way = self._ls_bin()
-        p = PopenSpawn("ls -l /bin")
+        p = self._spawn("ls -l /bin")
         the_new_way = b""
         while 1:
             i = p.expect_exact([b"\n", pexpect.EOF])
@@ -108,7 +126,7 @@ class ExpectTestCase(pexpect_test_case.PexpectTestCase):
         the_new_way = the_new_way.rstrip()
 
         assert the_old_way == the_new_way, len(the_old_way) - len(the_new_way)
-        p = PopenSpawn("echo hello.?world")
+        p = self._spawn("echo hello.?world")
         i = p.expect_exact(b".?")
         assert p.before == b"hello"
         assert p.after == b".?"
@@ -116,7 +134,7 @@ class ExpectTestCase(pexpect_test_case.PexpectTestCase):
     def test_expect_eof(self) -> None:
         """Read a child's whole output by expecting EOF."""
         the_old_way = self._ls_bin()
-        p = PopenSpawn("ls -l /bin")
+        p = self._spawn("ls -l /bin")
         # This basically tells it to read everything. Same as pexpect.run()
         # function.
         p.expect(pexpect.EOF)
@@ -126,13 +144,13 @@ class ExpectTestCase(pexpect_test_case.PexpectTestCase):
 
     def test_expect_timeout(self) -> None:
         """Wait for TIMEOUT and find it reported back in ``after``."""
-        p = PopenSpawn("cat", timeout=0.01)
+        p = self._spawn("cat", timeout=0.01)
         p.expect(pexpect.TIMEOUT)  # This tells it to wait for timeout.
         assert p.after == pexpect.TIMEOUT
 
     def test_unexpected_eof(self) -> None:
         """Raise EOF when the pattern never appears before the child ends."""
-        p = PopenSpawn("ls -l /bin")
+        p = self._spawn("ls -l /bin")
         try:
             p.expect("_Z_XY_XZ")  # Probably never see this in ls output.
         except pexpect.EOF:
@@ -142,7 +160,7 @@ class ExpectTestCase(pexpect_test_case.PexpectTestCase):
 
     def test_bad_arg(self) -> None:
         """Reject a pattern that is neither str, bytes nor a compiled regex."""
-        p = PopenSpawn("cat")
+        p = self._spawn("cat")
         # What is under test is the argument the signatures already rule out, so
         # the matchers are called through names that accept anything.
         expect: Callable[..., int] = p.expect
@@ -158,19 +176,20 @@ class ExpectTestCase(pexpect_test_case.PexpectTestCase):
 
     def test_timeout_none(self) -> None:
         """Match without a timeout, blocking until the data arrives."""
-        p = PopenSpawn("echo abcdef", timeout=None)
+        p = self._spawn("echo abcdef", timeout=None)
         p.expect("abc")
         p.expect_exact("def")
         p.expect(pexpect.EOF)
 
     def test_crlf(self) -> None:
         """Read a child's output as bytes ending in the platform line terminator."""
-        p = PopenSpawn("echo alpha beta")
+        p = self._spawn("echo alpha beta")
         assert p.read() == b"alpha beta" + p.crlf
 
     def test_crlf_encoding(self) -> None:
         """Read a child's output as text when an encoding is given."""
         p = PopenSpawn("echo alpha beta", encoding="utf-8")
+        self.addCleanup(p.close)
         assert p.read() == "alpha beta" + p.crlf
 
     def test_command_as_a_list(self) -> None:
@@ -180,7 +199,7 @@ class ExpectTestCase(pexpect_test_case.PexpectTestCase):
         When a PopenSpawn is created from it,
         Then the list is passed through unsplit and the child runs.
         """
-        p = PopenSpawn(["echo", "alpha beta"])
+        p = self._spawn(["echo", "alpha beta"])
         assert p.read() == b"alpha beta" + p.crlf
 
     def test_write_and_writelines(self) -> None:
@@ -191,7 +210,7 @@ class ExpectTestCase(pexpect_test_case.PexpectTestCase):
         used to send data,
         Then the child echoes everything back in the order it was sent.
         """
-        p = PopenSpawn("cat", timeout=5)
+        p = self._spawn("cat", timeout=5)
         p.write(b"alpha")
         p.writelines([b" beta", b" gamma", b"\n"])
         p.expect_exact(b"alpha beta gamma")
@@ -205,7 +224,7 @@ class ExpectTestCase(pexpect_test_case.PexpectTestCase):
         When :meth:`PopenSpawn.wait` is called,
         Then it returns that status and records it on the spawn.
         """
-        p = PopenSpawn([sys.executable, "exit1.py"])
+        p = self._spawn([sys.executable, "exit1.py"])
         p.expect(pexpect.EOF)
 
         assert p.wait() == 1
@@ -220,7 +239,7 @@ class ExpectTestCase(pexpect_test_case.PexpectTestCase):
         When :meth:`PopenSpawn.wait` is called,
         Then the signal is reported instead of an exit status.
         """
-        p = PopenSpawn("cat")
+        p = self._spawn("cat")
         p.kill(signal.SIGKILL)
 
         assert p.wait() == -signal.SIGKILL
@@ -252,7 +271,7 @@ class ExpectTestCase(pexpect_test_case.PexpectTestCase):
         Then neither call raises, the second is a no-op, and the exit status
         of the child is recorded.
         """
-        p = PopenSpawn("cat", timeout=5)
+        p = self._spawn("cat", timeout=5)
         p.sendeof()
         p.expect(pexpect.EOF)
 
@@ -273,7 +292,7 @@ class ExpectTestCase(pexpect_test_case.PexpectTestCase):
         Then it does not block for the full sleep -- it falls through to
         SIGTERM, which returns promptly -- and the signal is recorded.
         """
-        p = PopenSpawn("sleep 5")
+        p = self._spawn("sleep 5")
         p.delayafterclose = 0.05
         p.delayafterterminate = 0.05
 
@@ -300,7 +319,7 @@ class ExpectTestCase(pexpect_test_case.PexpectTestCase):
             "sys.stdout.flush()\n"
             "time.sleep(5)\n"
         )
-        p = PopenSpawn([sys.executable, "-c", ignores_sigterm])
+        p = self._spawn([sys.executable, "-c", ignores_sigterm])
         # Wait for the handler to actually be installed before close() sends
         # SIGTERM, or a slow interpreter start-up would race it: the signal
         # would arrive -- and be handled by the *default* action -- before
@@ -324,7 +343,7 @@ class ExpectTestCase(pexpect_test_case.PexpectTestCase):
         When :meth:`PopenSpawn.isalive` is called,
         Then it returns True and leaves exitstatus/signalstatus untouched.
         """
-        p = PopenSpawn("cat", timeout=5)
+        p = self._spawn("cat", timeout=5)
         try:
             assert p.isalive()
             assert p.exitstatus is None
@@ -341,7 +360,7 @@ class ExpectTestCase(pexpect_test_case.PexpectTestCase):
         Then it returns False and records exitstatus/terminated, the way
         :meth:`wait` does.
         """
-        p = PopenSpawn([sys.executable, "exit1.py"])
+        p = self._spawn([sys.executable, "exit1.py"])
         p.expect(pexpect.EOF)
         p.proc.wait()  # make sure the OS has reaped it before polling
 
@@ -357,7 +376,7 @@ class ExpectTestCase(pexpect_test_case.PexpectTestCase):
         When :meth:`PopenSpawn.isalive` is called,
         Then it returns False and records signalstatus/terminated.
         """
-        p = PopenSpawn("cat")
+        p = self._spawn("cat")
         p.kill(signal.SIGKILL)
         p.proc.wait()  # make sure the OS has reaped it before polling
 
@@ -378,7 +397,7 @@ class ExpectTestCase(pexpect_test_case.PexpectTestCase):
         Then the buffered characters come out first and EOF is only raised once
         nothing is left.
         """
-        p = PopenSpawn("echo alpha")
+        p = self._spawn("echo alpha")
         p.expect(pexpect.EOF)
         assert p._read_reached_eof
 
@@ -396,7 +415,7 @@ class ExpectTestCase(pexpect_test_case.PexpectTestCase):
         spawn timeout", until the reader thread has queued the child's output,
         Then that output is returned.
         """
-        p = PopenSpawn("echo alpha", timeout=5)
+        p = self._spawn("echo alpha", timeout=5)
 
         deadline = time.time() + 5
         data = b""
@@ -412,7 +431,7 @@ class ExpectTestCase(pexpect_test_case.PexpectTestCase):
         When read_nonblocking() is asked for zero characters,
         Then it returns an empty result without waiting for the child.
         """
-        p = PopenSpawn("cat", timeout=5)
+        p = self._spawn("cat", timeout=5)
         assert p.read_nonblocking(size=0, timeout=5) == b""
         p.sendeof()
         p.expect(pexpect.EOF)
@@ -430,7 +449,7 @@ class ExpectTestCase(pexpect_test_case.PexpectTestCase):
         waits on the un-monkeypatched clock even under the fast_sleep
         fixture, which is exactly why the timeout below is kept short.
         """
-        p = PopenSpawn("cat", timeout=5)
+        p = self._spawn("cat", timeout=5)
         try:
             with pytest.raises(pexpect.TIMEOUT):
                 p.read_nonblocking(size=10, timeout=0.05)
@@ -446,7 +465,7 @@ class ExpectTestCase(pexpect_test_case.PexpectTestCase):
         Then it raises TIMEOUT straight away rather than making a blocking
         call to the reader queue.
         """
-        p = PopenSpawn("cat", timeout=5)
+        p = self._spawn("cat", timeout=5)
         try:
             with pytest.raises(pexpect.TIMEOUT):
                 p.read_nonblocking(size=10, timeout=0)
@@ -465,7 +484,7 @@ class ExpectTestCase(pexpect_test_case.PexpectTestCase):
         into the full timeout. Timed with perf_counter(), which fast_sleep
         does not fake, unlike time.time().
         """
-        p = PopenSpawn("cat", timeout=5)
+        p = self._spawn("cat", timeout=5)
         p.sendline(b"hello")
 
         started = time.perf_counter()
@@ -484,7 +503,7 @@ class ExpectTestCase(pexpect_test_case.PexpectTestCase):
         Then the error is logged and the loop reports the end of the output by
         queueing the None sentinel.
         """
-        p = PopenSpawn("cat")
+        p = self._spawn("cat")
 
         with mock.patch.object(os, "read", side_effect=OSError("read failed")):
             p._read_incoming()

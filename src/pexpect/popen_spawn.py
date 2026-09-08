@@ -348,4 +348,15 @@ class PopenSpawn(SpawnBase[AnyStr]):
                 self.proc.wait()
 
         self.isalive()  # record exitstatus/signalstatus/terminated
+
+        # The child is gone, so the write end of its output pipe is closed and
+        # the reader thread is about to see the end of it and stop. Waiting for
+        # that before closing the read end is what keeps the descriptor out of
+        # the thread's hands: it reads by descriptor number, and a number
+        # closed under a blocked read is one the kernel may hand to something
+        # else. The wait is bounded rather than open-ended because a grandchild
+        # can hold the write end open past the child's death, and close() must
+        # not block on one.
+        self._read_thread.join(timeout=self.delayafterclose)
+        cast("IO[bytes]", self.proc.stdout).close()
         self.closed = True
