@@ -221,6 +221,16 @@ lint.per-file-ignores."src/pexpect/spawnbase.py" = [
 # with the budget that earns, never going below the 150 ms this suite was
 # written to. tests/integration/conftest.py sets its own, generous budget.
 
+# A warning is a defect, so it fails the run that produced it. No exemptions:
+# the one warning this suite expects is pexpect.screen's own deprecation
+# notice, which is asserted by a test of its own and let through at the two
+# imports that raise it -- see tests/test_screen.py. Stated here rather than as
+# `-W error` in addopts because a filter given on the command line outranks
+# every filter given in a config file, including the per-test ones a
+# `filterwarnings` mark installs.
+filterwarnings = [
+    "error",
+]
 
 [tool.mypy]
 check_untyped_defs = true
