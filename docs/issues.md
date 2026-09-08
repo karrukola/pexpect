@@ -2,29 +2,37 @@
 
 Bugs and latent defects found while running a full `ruff` lint pass over the
 repository, later while taking the test suite to 100% line and branch coverage,
-later still while annotating the package for `mypy`, and last while getting the
-suite to run clean on 3.10 through 3.14. Every entry was left
-alone at the time it was found, because fixing it would change runtime
-behaviour and that was out of scope for all three passes — the lint work was
-required to be behaviour-preserving, the coverage work to add tests rather than
-change the library, and the typing work to add annotations rather than either.
+later still while annotating the package for `mypy`, then while getting the
+suite to run clean on 3.10 through 3.14, and last in a review pass whose only
+task was to look for defects. Every entry from the first four was left alone at
+the time it was found, because fixing it would change runtime behaviour and that
+was out of scope for all of them — the lint work was required to be
+behaviour-preserving, the coverage work to add tests rather than change the
+library, and the typing work to add annotations rather than either.
 
-**Four are now fixed**, and are marked as such where they appear: 21, 27, 29
-and 30. The annotations could not describe those four without either stating
-something untrue about the code or preserving the defect behind a cast, so they
-were fixed first, separately. Number 31 is fixed too, for a different reason:
-it stopped `replwrap.zsh()` from working at all on a machine that had not been
-configured for it, and the test that should have caught it was supplying the
-missing configuration itself. So is 32, found while verifying 31 and fixed in
-turn; its entry keeps the wrong diagnosis it was first filed with, because
-correcting it is most of what the entry has to say. Everything else here is
-still outstanding.
+**Twenty are now fixed**, and every entry says which it is. Six came from the
+earlier passes: 21, 27, 29 and 30 during the typing pass, because the
+annotations could not describe them without either stating something untrue
+about the code or preserving the defect behind a cast; then 31, which stopped
+`replwrap.zsh()` from working at all on a machine that had not been configured
+for it while the test that should have caught it supplied the missing
+configuration itself; and 32, found while verifying 31 and fixed in turn — its
+entry keeps the wrong diagnosis it was first filed with, because correcting it
+is most of what the entry has to say.
 
-Line numbers refer to the tree as of the lint pass and were each verified
-against the source, not inferred from the rule that surfaced them. The
-library paths are given under `src/pexpect/`, its location since the switch
-to the src layout; that move was a pure rename, so the line numbers are
-unaffected by it.
+The other fourteen are the review pass's own: 33 to 39, 41 to 46, and 50. That
+pass had no behaviour-preserving constraint on it, so its entries were fixed
+rather than filed, each with the test that proves it. What it left alone it
+leaves alone for a reason it states: 40 needs a maintainer's decision about a
+documented contract, 47 is not worth the changelog line, 48 is release tooling,
+and 49 was found during the implementation and has not been through the review
+the rest had. Entries 1 to 20 and 22 to 26 and 28 are still outstanding.
+
+Line numbers in the first six sections refer to the tree as of the lint pass and
+were each verified against the source, not inferred from the rule that surfaced
+them; the review pass's own section states the current ones. The library paths
+are given under `src/pexpect/`, its location since the switch to the src layout;
+that move was a pure rename, so the line numbers are unaffected by it.
 
 Three related bugs *were* fixed during that pass, because they blocked the test
 suite or were introduced by an autofix, and are recorded at the bottom for
@@ -370,7 +378,7 @@ needs a deliberate decision about what the test should assert.
 
 ### 23. Tests that return `"SKIP"` instead of skipping
 
-**`tests/test_destructor.py:38`, `tests/test_isalive.py:63`**
+**`tests/integration/test_destructor.py:45`, `tests/test_isalive.py:66`**
 
 An old pexpect idiom: the test returns the string `"SKIP"` rather than raising
 `unittest.SkipTest` or using `@unittest.skipUnless`. Returning a non-`None`
@@ -617,6 +625,810 @@ path — ran bash alone, which is why a shell-specific failure in the recovery
 went unseen. There is now a zsh test for the real thing, plus
 `tests/no_editor_repl.py`, a stand-in that records SIGINT and acts on it at its
 next read, so the fallback stays covered on a machine with no zsh installed.
+
+---
+
+## Found during the code review pass (2026-09-08)
+
+These sixteen came out of reading the library end to end with no other task
+running. Each was reproduced before it was written down: the evidence quoted
+under each entry is output from a script run against this tree, and the line
+numbers are the current ones rather than the lint pass's.
+
+Two independent adversarial reviews were then run against this section, and both
+found real errors in it. What they changed is recorded in place — six of the
+sixteen had a proposed fix that was wrong or incomplete, and two of those would
+have shipped green. The corrections are worth as much as the findings, so the
+entries carry them rather than hiding them.
+
+One claim this section made in its first draft is worth retracting explicitly,
+because it is the kind of thing that reads as reassurance and is not. It said
+that the suite passes while every entry holds, so none of these is a
+regression. The first half is true — 356 passed, `ruff` clean, `mypy` clean on
+17 files — and the second does not follow from it. **45** is a regression: its
+filter was correct until `expect()` moved out of `pexpect/__init__.py` in 4.0,
+and the suite went on passing across that move because the test names the same
+module the filter does.
+
+### What fixing any of these costs
+
+Three things gate every entry below, none of which is visible from the entry
+itself:
+
+* `pyproject.toml:114` sets `report.fail_under = 100`. Applying this section's
+  fixes with no new tests takes the suite to 98.53% and `nox -s test` red. Each
+  fix needs its test in the same commit.
+* `doc/history.rst` opens at "Version 4.9" and has no unreleased section. Six of
+  these change caller-visible behaviour and need one created.
+* `tests/conftest.py` gives every test outside `tests/integration` a budget
+  measured in child processes. Where a proof needs a REPL, a SIGKILL or a real
+  clock, it belongs in `tests/integration`; the per-entry notes say which.
+
+### 33. `expect()` throws away the buffer on a zero-length match at the end of the window
+
+**Fixed.** A zero-length trailing match now leaves `before` and the buffer
+alone. The clamp is in, and a test pins the case that would have broken had it
+been left out.
+
+**`src/pexpect/expect.py:58`**
+
+```python
+spawn.before = spawn._before.getvalue()[0 : -(len(window) - searcher.start)]
+```
+
+The slice means "everything except the part of the window from the match
+onwards", and it is right for every match with a body. When the match is
+zero-length and sits at the very end of the window, `len(window) -
+searcher.start` is `0`, `-0` is `0`, and the slice collapses to `[0:0]`. So
+`before` comes back empty. The next three lines make it worse rather than
+better: `_buffer` and `_before` are both rewritten from `window[searcher.end:]`,
+which is also empty, so the data is not left behind for the next call either.
+It is simply gone.
+
+Any pattern that can match the empty string at the end of the buffer triggers
+it. `$` is the obvious one, and `\s*$` — "wait for the end of the output" — is
+the one somebody would actually write:
+
+```python
+p = pexpect.spawn("cat", encoding="utf-8")
+p.send("abcdef")
+p.expect_exact("abc")  # buffer now holds 'def'
+p.expect(r"\s*$")  # idx=0 before='' after='' buffer=''
+p.expect(r"f$")  # control: idx=0 before='de' after='f'
+```
+
+The control line is the point: the same buffer, a pattern one character longer,
+and `before` is correct. Nothing in the suite matches an empty string at the end
+of a window — the only `$` in the tests is a literal inside a `[$#]` prompt
+class — which is why it has gone unseen.
+
+**Fix:** compute the cut as a positive index, and clamp it:
+
+```python
+before_value = spawn._before.getvalue()
+tail = len(window) - searcher.start
+spawn.before = before_value[: max(0, len(before_value) - tail)]
+```
+
+The `max(0, ...)` is not decoration. `_before` can be shorter than the search
+window, because `_set_buffer` (the public `buffer` property) writes `_buffer`
+and leaves `_before` alone; in that state `tail` exceeds `len(before_value)` and
+the unclamped form invents a character that was never in `before`:
+
+```text
+_before='xy'  window='abc'  start=0  tail=3
+  today      ''
+  unclamped  'x'   <- wrong, and reachable through a documented setter
+  clamped    ''
+```
+
+The two reviews disagreed on this point, one calling the clamp optional. The
+arithmetic above settles it.
+
+### 34. `interact()` crashes on a str-mode spawn that has a logfile
+
+**Fixed.** `_log_control()` took a `direction` parameter first, so the child's
+output lands in `logfile_read` and the user's keystrokes in `logfile_send`; a
+str-mode `interact()` with a logfile now survives a round trip, and
+`tests/interact.py` can set a logfile so the test harness can say so.
+
+**`src/pexpect/pty_spawn.py:986`, `:1005`, `:1008`**
+
+All three call `self._log(data, ...)` with the raw bytes just read from a file
+descriptor. `_log()` writes its argument straight into `logfile`,
+`logfile_read` and `logfile_send`, and on a spawn created with an `encoding`
+those are text streams. The first keystroke in either direction ends the
+session:
+
+```text
+INTERACT-RAISED: TypeError: string argument expected, got 'bytes'
+  File "src/pexpect/pty_spawn.py", line 1008, in __interact_stdin_to_child
+    self._log(data, "send")
+  File "src/pexpect/spawnbase.py", line 272, in _log
+    self.logfile.write(s)
+```
+
+The docstring two screens above promises the opposite — "If a logfile is
+specified, then the data sent and received from the child process in interact
+mode is duplicated to the given log" — and `interact()`'s own signature
+documents that the filters see bytes "even with `encoding='utf-8'` support", so
+bytes at this point are expected; handing them to the log is what is not.
+
+`sendcontrol()` and `sendeof()` on the same class already solve this, in
+`_log_control()` at `pty_spawn.py:739`: decode when an encoding is in force,
+then log. The interact paths predate it and never adopted it.
+
+This is invisible to the suite because `tests/integration/test_interact.py`
+drives `tests/interact.py`, which sets no logfile.
+
+**Fix:** route all three through `_log_control()` — but not as it stands.
+`_log_control()` hard-codes `direction="send"`, so sending the read side through
+it would file the child's output under `logfile_send`. It needs the direction as
+a parameter first:
+
+```python
+def _log_control(self, s: bytes, direction: str = "send") -> None:
+```
+
+then `self._log_control(data, "read")` at `:986` and `self._log_control(data)`
+at `:1005` and `:1008`. With that in place a str-mode `interact()` logs
+`log='hi\rhi\r\nhi\r\n'`, `read='hi\r\nhi\r\n'`, `send='hi\r'` — the split the
+attributes promise.
+
+### 35. `replwrap` hands the child an environment of exactly one variable
+
+**Fixed.** `env={**os.environ, "NO_COLOR": "1", "TERM": "dumb"}`. The `TERM`
+half was not optional: without it the 3.13+ REPL rebuilt its full-screen editor
+and every reply came back as `\x1b[?12l\x1b[?25h\x1b[1@4...` in place of the
+output, which is what the naive one-liner produced when it was tried.
+
+**`src/pexpect/replwrap.py:58`**
+
+```python
+self.child = pexpect.spawn(cmd_or_spawn, echo=False, encoding="utf-8", env={"NO_COLOR": "1"})
+```
+
+`spawn`'s `env` argument *replaces* the environment rather than adding to it, so
+every REPL started from a command string — including `replwrap.python()`, the
+module's own entry point — runs with no `PATH`, no `HOME`, no `VIRTUAL_ENV`, no
+locale and no proxy settings:
+
+```text
+sorted(os.environ) in the child   ['LC_CTYPE', 'NO_COLOR']
+os.environ.get('HOME')            None
+os.environ.get('PATH')            None
+```
+
+The intent is on record in the commit that introduced it — `95d09c5`, "Force
+NO_COLOR=1 to fix test failures with Python 3.13+ REPL" — and adding one
+variable is all it was meant to do. `_repl_sh()` in the same module gets this
+right for `PS1` (`env = {**os.environ, "PS1": _SH_PROMPT}`), so the module
+contains both the mistake and its own correction, thirty lines apart. `bash()`
+and `zsh()` go through `_repl_sh` and are unaffected; `python()` and any
+`REPLWrapper("some-repl", ...)` are not.
+
+What survives is a REPL that cannot find its own configuration. A wrapped
+`ipython` reads no profile; anything the REPL shells out to falls back to
+`os.defpath`; `~` still expands, because CPython asks the password database when
+`HOME` is unset, so the failure is partial and quiet rather than loud.
+
+The suite does not catch it because `tests/integration/test_replwrap.py:176`
+builds its spawn with the same `env={"NO_COLOR": "1"}`, so the test child is as
+bare as the library's own — the same shape of blind spot that **31** was filed
+for.
+
+**Fix:** `env={**os.environ, "NO_COLOR": "1", "TERM": "dumb"}`. The obvious
+one-liner without `TERM` is a regression: inheriting the real `TERM` lets the
+3.13+ REPL build its full-screen editor again, and every reply comes back
+wrapped in escape sequences (`[?12l[?25h[1@i[1@m...`). The suite would not
+notice that either, because `lean_child_env` sets `PYTHON_BASIC_REPL=1` for the
+tests. A test for this has to `monkeypatch.delenv("PYTHON_BASIC_REPL")` to be
+able to fail, and belongs in `tests/integration` — it starts a REPL.
+
+### 36. `SocketSpawn` never logs what it reads
+
+**Fixed.** One line: the decoded data is logged before it is returned.
+
+**`src/pexpect/socket_pexpect.py:157`** (`read_nonblocking`)
+
+Every other implementation logs what it read — `SpawnBase`'s at
+`spawnbase.py:345`, `PopenSpawn`'s at `popen_spawn.py:197`. This one returns the
+decoded data without logging it, so `logfile` and `logfile_read` are accepted by
+the constructor, stored, flushed by the send path at `socket_pexpect.py:128`,
+and never receive a byte of what the socket sends:
+
+```python
+s = SocketSpawn(sock, timeout=3, logfile=io.BytesIO())
+s.expect(b"hello")
+# logfile.getvalue() == b''
+```
+
+Half of a documented feature is missing rather than broken, which is the kind of
+thing a test asserts about `spawn` and never re-asserts about its siblings:
+`tests/test_log.py` has four tests and all four use `pexpect.spawn`.
+
+**Fix:** `self._log(decoded, "read")` before the return. Only that line is new —
+the `decode()` call the first draft of this entry proposed alongside it is
+already there, landed as part of **29**.
+
+Worth stating because it is a new failure mode rather than a fixed one: a
+`SocketSpawn` built with an `encoding` *and* a binary logfile currently logs
+nothing, and will then raise `TypeError` on the first read, exactly as **34**
+does. That combination is wrong either way; the fix makes it say so.
+
+### 37. `SocketSpawn.read_nonblocking(size, 0)` raises `BlockingIOError`
+
+**Fixed.** `except (TimeoutError, BlockingIOError)`, so a zero timeout raises
+`TIMEOUT` here as it does everywhere else.
+
+**`src/pexpect/socket_pexpect.py:152`** (in `_timeout`), **`:182`**
+
+The docstring documents `timeout=0` as "poll", and the whole timeout mechanism
+here is `socket.settimeout()`. But zero is the one value `settimeout()` does not
+treat as a timeout: it puts the socket in non-blocking mode, where an empty
+receive buffer raises `BlockingIOError`, not `TimeoutError`. The `except
+TimeoutError` below therefore does not catch it and the caller sees the raw OS
+error.
+
+This is not only reachable by a caller polling on purpose, as the first draft of
+this entry said. `Expecter._read_until_match` gives up only when the remaining
+time is *negative*, so it passes a zero timeout straight through, and the plain
+public call does it:
+
+```python
+SocketSpawn(sock, timeout=3).expect(b"x", timeout=0)
+# BlockingIOError: [Errno 11] Resource temporarily unavailable
+pexpect.spawn("cat").expect("x", timeout=0)
+# TIMEOUT: Timeout exceeded.        <- what every other spawn class does
+```
+
+**Fix:** `except (TimeoutError, BlockingIOError)`, both raising `TIMEOUT`. Both
+mean the same thing to a caller: nothing to read yet.
+
+Sequencing note, which is the functional half of the coupling **47** mentions
+only cosmetically: if **4** is ever resolved by *honouring* `use_poll`, this
+method stops using `socket.settimeout()` and this catch becomes dead code.
+Decide **4** before writing a test that pins the `BlockingIOError` path.
+
+### 38. `PopenSpawn` cannot be used as a context manager
+
+**Fixed.** Both methods exist. `close()` escalates the way `pty_spawn.close()`
+does — stdin, `wait(delayafterclose)`, SIGTERM, `wait(delayafterterminate)`,
+SIGKILL — rather than blocking on a child that never reads its stdin, and
+`isalive()` records `exitstatus`, `signalstatus` and `terminated` on the way
+past.
+
+**`src/pexpect/popen_spawn.py`** (the class has no `close()` and no `isalive()`)
+
+`SpawnBase.__exit__` calls `self.close()`, and the base declares `close()` under
+`if TYPE_CHECKING` only — deliberately, and its docstring says so, since a
+subclass that forgot it should not inherit a broken one. `PopenSpawn` is that
+subclass:
+
+```python
+with PopenSpawn("cat") as c:
+    c.sendline("hi")
+# AttributeError: 'PopenSpawn' object has no attribute 'close'
+```
+
+The `with` form is the first thing `pexpect/__init__.py` shows a reader after
+`spawn` itself, and `fdspawn` and `SocketSpawn` both implement `close()`, so
+`PopenSpawn` is the only spawn class in the package that cannot be used that
+way. `isalive()` is missing on the same class, which is the other half of the
+same gap.
+
+**Fix:** add both, and not the way the first draft of this entry put it. "Close
+stdin, then wait for the child" hangs: `with PopenSpawn("sleep 5")` then blocks
+for five seconds, and for a child that never exits on stdin EOF it blocks
+forever — while `pty_spawn.close()` force-terminates by default. Follow that
+instead: close stdin, `proc.wait(self.delayafterclose)`, SIGTERM,
+`wait(self.delayafterterminate)`, SIGKILL, `wait()`. `isalive()` should record
+what it learns the way `spawn.isalive()` does — set `exitstatus`,
+`signalstatus` and `terminated` — rather than just returning `poll() is None`.
+
+Do not give `close()` a `force` flag: `ruff`'s FBT001/FBT002 fire on it, and
+this module's per-file ignores cover only PLR0913/PLR0917. The no-argument
+`close()` of `fdspawn` and `SocketSpawn` is the signature to match.
+
+### 39. `PopenSpawn.read_nonblocking()` never waits, so `expect()` busy-polls
+
+**Fixed.** The queue is waited on only while the buffer is empty, so a match
+still costs about a millisecond while a genuine timeout costs 1.00 s of wall
+clock for 0.0008 s of CPU, down from 0.15 s. `read_nonblocking()` raises
+`TIMEOUT` on an empty deadline, and the `size == 0` fast path is untouched.
+
+**`src/pexpect/popen_spawn.py:184-186`**
+
+```python
+while (time.time() - t0) < timeout and size and len(buf) < size:
+    try:
+        incoming = self._read_queue.get_nowait()
+    except Empty:
+        break
+```
+
+The loop is written as if it waited out the timeout, and the header even
+recomputes the elapsed time on each pass, but `get_nowait()` plus `break` means
+the first empty queue ends it. So the method returns an empty string instead of
+either waiting for data or raising `TIMEOUT`, which is what the same method on
+every other spawn class does:
+
+```python
+p = PopenSpawn("cat", timeout=1)
+p.read_nonblocking(10, 1.0)  # b'' after 0.0001s
+```
+
+`expect()` survives this because `Expecter._read_until_match` treats an empty
+read as "no match yet" and goes round again, but that turns a blocking wait into
+a spin at `delayafterread` — 0.0001 s — and it shows on a clock:
+
+| spawn class | wall | CPU |
+|---|---|---|
+| `PopenSpawn` | 1.00 s | 0.15 s |
+| `spawn` (pty) | 1.00 s | 0.00 s |
+
+Fifteen percent of a core to wait for nothing, and a direct caller of
+`read_nonblocking()` gets a return value that means EOF for a file-like object
+and does not mean it here.
+
+**Fix, with the trap that the first draft of this entry walked into.** Replacing
+`get_nowait()` with `get(timeout=remaining)` makes the loop wait for `size`
+characters — `maxread`, so 2000 of them — instead of for the first one. Measured
+after that change: `PopenSpawn("cat")`, `sendline("hello")`, `expect("hello")`
+went from about a millisecond to the full ten-second timeout. Wait only while
+the buffer is empty:
+
+```python
+incoming = self._read_queue.get(timeout=remaining) if not buf else self._read_queue.get_nowait()
+```
+
+then raise `TIMEOUT` when the deadline passes with nothing read. Measured with
+that form: a match costs 0.001 s, and a genuine timeout is 1.00 s wall for
+0.0008 s of CPU. Two constraints on the way in: keep the `size == 0` fast path
+returning empty, or `tests/test_popen_spawn.py::test_read_nonblocking_of_nothing`
+fails; and the method needs splitting to stay under `ruff`'s C901, after which
+the `# noqa: PERF203` on the old `except Empty` is unused and RUF100 will say so.
+
+A duration assertion cannot go in `tests/test_popen_spawn.py` as it stands:
+that module uses `fast_sleep`, which fakes `time.time()` while `Queue.get`
+waits on the real clock. Assert the outcome — `TIMEOUT` raised, prompt matched —
+not the timing, or measure with `perf_counter` outside the fixture.
+
+### 40. The documented pattern contract and the three coercions disagree
+
+**Not fixed.** The choice between widening the documented contract and
+narrowing `_coerce_expect_re` belongs to a maintainer; the entry states both
+options and what each one costs.
+
+**`src/pexpect/spawnbase.py:282`** (`_coerce_expect_string`), **`:288`**
+(`_coerce_expect_re`), **`:300`** (`_coerce_send_string`), and
+**`doc/api/pexpect.rst:83-85`**
+
+The three coercions do not agree on an encoding. Sending uses UTF-8, compiling a
+pattern object uses UTF-8, and compiling a pattern *string* uses ASCII:
+
+```python
+p = pexpect.spawn("cat")  # bytes mode
+p.send("café")  # 5 -- encoded as UTF-8
+p.expect(re.compile("café"))  # 0, after=b'caf\xc3\xa9'
+p.expect("café")  # UnicodeEncodeError: 'ascii' codec can't encode '\xe9'
+p.expect_exact("café")  # UnicodeEncodeError, same place
+```
+
+One instance, one pattern, three outcomes. The first draft of this entry called
+the ASCII arm the bug and proposed switching it to UTF-8. Both reviews rejected
+that, and the documentation is why:
+
+> For backwards compatibility, some Unicode is allowed in bytes mode: the send
+> methods will encode arbitrary unicode as UTF-8 before sending it to the child
+> process, and its expect methods can accept ascii-only unicode strings.
+
+So the ASCII restriction on `expect` is the documented contract, and the
+*outlier* is `_coerce_expect_re`, which is more permissive than the docs
+promise. What is left is a genuine defect of a different kind — three code
+paths, one documentation sentence, and no agreement between them — with a
+decision behind it that is not the reviewer's to take:
+
+* widen the docs and `_coerce_expect_string` to UTF-8, and accept that a
+  pattern which fails loudly today becomes one that silently never matches
+  against a child that is not sending UTF-8; or
+* narrow `_coerce_expect_re` to ASCII, and break callers who compile their own
+  non-ASCII patterns today.
+
+**Fix:** none applied. This one needs a maintainer's call and a changelog line,
+not a quiet correction. Whichever way it goes, the error message deserves
+improving: `UnicodeEncodeError` from inside `re.compile` says nothing about the
+rule it enforced.
+
+### 41. `pxssh.login()` interpolates the server, user and paths without quoting — security
+
+**Fixed.** All four values are `shlex.quote`d; `self.options` was left alone,
+for the reason below. See the note at the end of this section: the fix disarmed
+two tests that had been smuggling an ssh argument through the server name, and
+those were repaired too.
+
+**`src/pexpect/pxssh.py:326`, `:374`, `:553`, `:561`**
+
+This is the entry to read first. It was ninth in a flat list in the first draft,
+next to a dead attribute, and that framing was wrong.
+
+The ssh command line is assembled by string concatenation, and four of the
+values that go into it are not quoted: the private key path (`f" -i {ssh_key}"`),
+the config path (`" -F " + ssh_config`), the username (`" -l " + username`) and
+the server (`cmd += f" {ssh_options} {server}"`). The tunnel specifications a few
+lines away *are* quoted, through `shlex.quote`, so the module already knows the
+problem exists:
+
+```python
+pxssh.pxssh(debug_command_string=True).login("host; touch /tmp/pwned", "user name", ssh_key=True)
+# 'ssh  -q -A -l user name host; touch /tmp/pwned'
+```
+
+Two distinct failures come out of that one string. A value with a space in it —
+an ordinary key path under `~/My Keys/`, or the username above — is split into
+two argv entries by `split_command_line()` and the command silently means
+something else. And when `login()` is called with `spawn_local_ssh=False`, the
+whole string is handed to `sendline()` for a *remote shell* to parse, where the
+`;` above starts a second command. pxssh is used in automation where the
+hostname comes from inventory data, which is exactly where an untrusted value
+gets in.
+
+**Fix:** `shlex.quote` each of the four. `quote` is already imported at `:30`.
+Safe on the local path too — verified round-trip through
+`split_command_line()` for `'`, `"`, space, `;` and `$` — so the two paths need
+not diverge.
+
+Not `self.options` at `:363`, which the first draft of this entry threw in as an
+afterthought. Those values are already wrapped in single quotes, and
+`shlex.quote("StrictHostKeyChecking=no")` returns it *unquoted*, so `-o
+'StrictHostKeyChecking=no'` would become `-o StrictHostKeyChecking=no` and
+`tests/test_pxssh.py:281` fails on the literal it asserts. An option *value*
+containing a single quote is a real hole in that line, but closing it means
+quoting the value inside the existing quotes and changing that assertion
+deliberately.
+
+### 42. `ANSI` writes a file called `log` into the working directory
+
+**Fixed.** `DoLog` writes to `logging.getLogger(__name__)` at debug level and
+the file is gone, which let `tests/test_ansi.py` drop the `chdir` into a
+temporary directory that it had been carrying to cope with this.
+
+**`src/pexpect/ANSI.py:216`** (`DoLog`), **`:224`**, **`:258`**
+
+`DoLog` is the FSM's default transition and the "any" transition out of several
+states, so it runs whenever the emulator meets an escape sequence it does not
+implement. What it does is open `log` in the current directory, in append mode,
+and write a line to it:
+
+```python
+t = ANSI.ANSI(4, 10)
+t.write("\x1b[4h")  # set insert mode
+# ./log now exists, containing 'h,NUMBER_1\n'
+```
+
+`\x1b[4h` is not exotic, and the asymmetry is worth noting: `\x1b[4l` *is*
+handled, by `DoMode` at `:297`; only `h` has no transition out of `NUMBER_1`. So
+any program that switches to insert mode leaves a file behind in whatever
+directory the calling process happens to be in. Where the directory cannot be
+written the write itself escapes `ANSI.write()` — reproduced with a deleted cwd,
+which raises `FileNotFoundError` from inside a character write. (A read-only
+directory does not reproduce as root, which is worth knowing before writing a
+test for that half.)
+
+The suite knows. `tests/test_ansi.py:139` creates a temporary directory,
+`chdir`s into it for the duration of the torture-test replay, and says why:
+"This causes ANSI.py's DoLog to write in the cwd. Make sure we're in a
+writeable directory." A workaround in the tests is not a fix in the library.
+
+**Fix:** keep `DoLog` — it is a public FSM callback and `ANSI` wires it into six
+transitions — but give it `logging.getLogger(__name__).debug(...)` instead of
+the file, which is silent unless the application configures it. Keep the
+`fsm.memory = [screen]` reset, which is behaviour rather than logging. The
+module is deprecated in favour of `pyte`, so the smaller change is the better
+one. `tests/test_ansi.py` can then drop its `chdir`.
+
+### 43. `split_command_line()` mishandles leading whitespace, and `spawn("")` raises `IndexError`
+
+**Fixed.** Both halves: the state machine starts in `_STATE_WHITESPACE`, so a
+leading space no longer opens an empty argument, and `_resolve_command()` raises
+`ExceptionPexpect` for an empty command instead of indexing an empty list.
+
+**`src/pexpect/utils.py:79`** (the initial state), **`src/pexpect/pty_spawn.py:351`**
+
+The first draft of this entry reported only the empty-string case:
+
+```text
+pexpect.spawn("")      IndexError: list index out of range
+pexpect.run("")        IndexError: list index out of range
+pexpect.spawn("   ")   ExceptionPexpect: The command was not found or was not executable: .
+```
+
+An empty command is what a caller gets from an unset configuration value, and
+`ExceptionPexpect` is what the very next lines raise for every other unusable
+command — including, as the third line shows, a command of nothing but spaces.
+
+But the state machine has the more interesting half of it. `split_command_line`
+starts in `_STATE_BASIC`, so leading whitespace closes an argument that was
+never opened:
+
+```text
+split_command_line(" ls")   ['', 'ls']
+pexpect.spawn(" ls")        ExceptionPexpect: The command was not found or was not executable: .
+```
+
+A command string with a leading space fails today, and the reported name is `.`
+rather than anything the caller wrote. That is not an edge case a caller has to
+construct; it is what string concatenation produces.
+
+**Fix:** two parts, and the first is the root cause. Start the machine in
+`_STATE_WHITESPACE` in `utils.py`, which makes `""`, `"   "` and `" ls"` all
+behave; then keep an explicit guard in `_resolve_command` for an empty result:
+`raise ExceptionPexpect("The command to be executed is empty.")`. The
+`("", 0)` case in `tests/test_command_list_split.py` is unaffected by the state
+change; `spawn("   ")`'s message changes, which is the point.
+
+This also softens **8**'s premise. That entry calls the `if self.command is
+None` guard unreachable because "the command has already been resolved to a
+non-`None` value or an `ExceptionPexpect` has been raised" — which is not true
+today, since the empty string escapes as an `IndexError` instead. Fixing this
+entry is what makes **8**'s claim correct.
+
+### 44. `run()`'s `list[str]` annotation is not true
+
+**Fixed.** All eight signatures now say `str`. `mypy src tests` stays clean, so
+nothing in the repository was relying on the annotation that was not true.
+
+**`src/pexpect/run.py:41`, `:55`, `:69`, `:82`** (and `:244`, `:258`, `:272`,
+`:285` for `runu`)
+
+All eight signatures declare `command: str | list[str]`, but `run()` forwards
+the value to `spawn(command)` as a single argument, and `spawn` only accepts a
+list through its *second* parameter. A list reaches `split_command_line()`,
+which iterates it as characters, so the elements are concatenated:
+
+```python
+pexpect.run(["echo", "hi"])
+# ExceptionPexpect: The command was not found or was not executable: echohi.
+```
+
+`mypy` does not catch the mismatch because `run()` calls through
+`_spawn_bytes: Callable[..., spawn[bytes]]` at `run.py:24`, which erases the
+parameter types on the way.
+
+**Fix:** narrow the annotation to `str`. This is annotation-only — no runtime
+behaviour changes — but it is visible to downstream type checking: code that
+passes a list type-checks today and stops. It also leaves
+`PopenSpawn(cmd: str | list[str])`, where a list genuinely works, as the
+odd one out, which is worth a sentence in the changelog rather than a second
+change. Accepting a list in `run()` would mean adding an `args` parameter, which
+is a feature rather than a correction. There is no test to add; `mypy` is the
+proof.
+
+### 45. `get_trace()` no longer hides the frames it promises to hide
+
+**Fixed.** The filter drops any frame whose file sits inside the package
+directory, so it needs no maintenance the next time a raise moves.
+
+**`src/pexpect/exceptions.py:29`**
+
+```python
+if ("pexpect/__init__" not in item[0]) and ("pexpect/expect" not in item[0])
+```
+
+The docstring says "the stack trace inside the Pexpect module is not included".
+The filter names two modules, and what a caller actually gets is:
+
+```text
+  File "probe3.py", line 24, in <module>       <- the caller, wanted
+  File "src/pexpect/spawnbase.py", line 550, in expect
+  File "src/pexpect/spawnbase.py", line 616, in expect_list
+```
+
+The first draft of this entry said the raising code had moved out of both
+filtered modules. That is wrong, and the correct diagnosis is sharper: the
+`expect.py` frames *are* still filtered, and what leaks is `spawnbase.py`,
+because `expect()` and `expect_list()` moved out of `pexpect/__init__.py` in
+4.0. The filter was right before that move and has been stale since.
+
+`tests/test_misc.py:628-629` asserts two things — `"raise " not in tb` and
+`"pexpect/__init__.py" not in tb` — and the trace above satisfies both, which is
+why the move went unnoticed; `tests/test_timeout_pattern.py:81` checks the same
+one module name.
+
+**Fix:** filter on the package directory rather than on two module names —
+`str(Path(__file__).parent)` against `item[0]` — which needs no maintenance the
+next time a raise moves. One consequence to state in the test: a traceback
+raised wholly inside pexpect then returns `""`.
+
+### 46. `screen.erase_up()` and `erase_down()` erase the row the cursor is on
+
+**Fixed.** Both boundaries are guarded. `erase_down` had no test at all before
+this; it has one now, as does the top-row case of `erase_up`.
+
+**`src/pexpect/screen.py:372`** (`erase_down`), **`:377`** (`erase_up`)
+
+Both methods clear from the cursor to one edge of the screen, in two steps: the
+partial current line, then the whole rows beyond it. At the boundary the second
+step undoes the first.
+
+```python
+self.erase_start_of_line()
+self.fill_region(self.cur_r - 1, 1, 1, self.cols)  # erase_up
+```
+
+With the cursor on row 1 there are no rows above, but `cur_r - 1` is `0`,
+`fill_region` constrains that to `1`, and the region becomes row 1 in full —
+including the columns to the right of the cursor that `erase_start_of_line()`
+had just been careful to leave alone. `erase_down` has the same defect at the
+other end, with `cur_r + 1` constrained back down to `rows`:
+
+```text
+screen(3, 6) filled with dots
+  cursor (1,3), erase_up()     row 1 = '      '   expected '   ...'
+  cursor (3,3), erase_down()   row 3 = '      '   expected '..    '
+```
+
+`tests/test_screen.py:428` puts the cursor on row 2, so the `erase_up` boundary
+is not covered, and there is no `test_erase_down` at all.
+
+**Fix:** guard each region fill — `if self.cur_r > 1:` and
+`if self.cur_r < self.rows:`. Both new branches need a boundary test, which the
+100% branch requirement will insist on anyway.
+
+### 47. `fdspawn.own_fd` is set and never read
+
+**Not fixed, deliberately.** Both reviews said to leave it, and this entry
+exists so that nobody reads the attribute and believes it means something.
+
+**`src/pexpect/fdpexpect.py:129`**
+
+`close()` at `:134` closes `child_fd` unconditionally, so the flag has no
+reader; `own_fd` appears exactly once in the tree. It is a leftover from
+upstream's `close()`, which branched on it into `self.close(self)` — a call with
+an extra positional argument, so a `TypeError` rather than the infinite
+recursion the first draft of this entry claimed, and unreachable either way
+because nothing ever set the flag True.
+
+Same shape as **4** (`SocketSpawn.use_poll`): a stored attribute with no
+behaviour behind it.
+
+**Fix:** none recommended. Deleting a public attribute costs a changelog line
+and buys nothing; both reviews said leave it. Honouring it — close only a
+descriptor `fdspawn` opened itself, which is what the module's "You are
+responsible for opening and closing the file descriptor" implies — is a real
+change and needs a decision, not a tidy-up. Recorded here so that nobody reads
+the attribute and believes it means something.
+
+### 48. Three sources of truth for the version number
+
+**Not fixed.** Release tooling rather than a code fix, and the one-line version
+of it can break `import pexpect`; the entry says what to do instead.
+
+**`src/pexpect/__init__.py:86`**, **`pyproject.toml:3`**, **`doc/conf.py:38`**
+
+`pyproject.toml` declares `dynamic = ["version"]` and derives it with
+`setuptools_scm`; `__init__.py` hard-codes `4.9.0`; `doc/conf.py` hard-codes
+`4.9`. Nothing reconciles the three, and in this checkout the first two disagree
+by construction: `pexpect.__version__` is `4.9.0` while
+`importlib.metadata.version("pexpect")` reports a `0.0.post1.devNNNN` string
+frozen into `pexpect.egg-info` at install time — the two reviews saw different
+`NNNN`, which is itself the point.
+
+After any release that forgets to hand-edit line 86, the package reports the
+previous version to every caller that asks it the documented way, and the built
+documentation reports a third.
+
+**Fix:** not `__version__ = importlib.metadata.version("pexpect")` on its own,
+as the first draft of this entry suggested — that raises
+`PackageNotFoundError` at import time for a vendored or uninstalled copy, so
+`import pexpect` fails outright, and for anyone working in a checkout it turns
+a meaningful `4.9.0` into an scm build string. Use `setuptools_scm`'s
+`version_file` so the number is written into the package at build time and read
+from there, and point `doc/conf.py` at the same value. Failing that, leave the
+hand-edit alone and add line 86 and `doc/conf.py:38` to a release checklist.
+This is release tooling rather than a code fix, and nothing in the repository
+reads `__version__`, so no test catches any of it.
+
+### 49. `terminated` is True on a live child for three of the four spawn classes
+
+**`src/pexpect/spawnbase.py:177`**, and the absence of any counterpart to
+**`src/pexpect/pty_spawn.py:440`**
+
+`SpawnBase.__init__` sets `self.terminated = True`, and exactly one subclass
+puts it back: `spawn._spawn()` sets it False once the child is running. So every
+other spawn class reports a running child as terminated, from construction until
+something happens to correct it:
+
+```text
+PopenSpawn("cat")   isalive=True  terminated=True
+spawn("cat")        isalive=True  terminated=False
+fdspawn(fd)         isalive=True  terminated=True
+```
+
+`terminated` is a documented public attribute, and the three classes disagree
+with the one that has always been right. Nothing in the library reads it, which
+is why the suite never noticed — it was found while writing the tests for **38**,
+where an `isalive()` test had to be written around it.
+
+**Fix:** clear the flag where each class learns it has something live —
+`PopenSpawn.__init__` once `Popen` has returned, `fdspawn.__init__` and
+`SocketSpawn.__init__` once the descriptor has been accepted — rather than
+flipping the base class's default, which would leave a `spawn(None)` factory
+instance claiming a child it has not started.
+
+Not fixed here. It changes an observable value on three public classes, and
+unlike everything above it, it has not been through the review this section's
+other entries had.
+
+### 50. The `with spawn(...)` idiom does not type-check
+
+**`src/pexpect/spawnbase.py:823`**
+
+```python
+def __enter__(self) -> SpawnBase[AnyStr]:
+```
+
+The annotation widens the object to the base class, so inside a `with` block
+every method a concrete class adds is invisible to a type checker:
+
+```python
+with pexpect.spawn("cat") as child:
+    child.sendline("x")
+# error: "SpawnBase[bytes]" has no attribute "sendline"  [attr-defined]
+```
+
+`send`, `sendline`, `close`, `isalive`, `interact` and `terminate` are all
+subclass methods, so a `with` block is typed as offering almost nothing a caller
+would use it for — and the idiom is not obscure: `pexpect/__init__.py`'s module
+docstring advertises it, directly under the plain `spawn` example.
+
+This surfaced from the other direction. The tests written for **38** used the
+`with` form, as the entry asked, and that is what turned `mypy src tests` — the
+gate `noxfile.py` runs — red for the first time.
+
+**Fix:** return the self type, so the concrete class survives the `with`. The
+project targets 3.10, where `typing.Self` does not exist at runtime, so it is
+the self-type TypeVar idiom: a module-level `TypeVar` bound to
+`"SpawnBase[Any]"`, and `def __enter__(self: _SelfT) -> _SelfT:`.
+
+### What the fixes cost, and one thing they broke
+
+Thirteen of the sixteen were implemented, plus **50**; **40**, **47**, **48**
+and **49** are left as recorded above, each for a stated reason. Every fix
+landed with the test that proves it, because the suite gates on 100% line and
+branch coverage and would otherwise have gone red. The suite is 388 tests, up
+from 356, and passes in random order as well as in file order.
+
+Two of the fixes went in differently from how this section first proposed them,
+and the entries say so in place: **34** needed `_log_control()` to learn a
+`direction` before anything could be routed through it, and **35** needed
+`TERM="dumb"` alongside the inherited environment. Both of those would have
+shipped green.
+
+The one worth recording separately is **41**, because it is the only fix here
+that broke something that was passing. `tests/integration/test_pxssh_login.py`
+selected the mock server's remote shell by smuggling it into the hostname —
+`login("server zsh", ...)` and `login("server tcsh", ...)` — which worked
+precisely because `server` was interpolated unquoted and
+`split_command_line()` then broke it into two argv words. Quoting the hostname
+is the fix, and it turned both of those tests into duplicates of the bash one.
+
+They did not fail. They passed, having quietly stopped testing the thing they
+are named after, and the only reason anyone noticed is that
+`pxssh.set_unique_prompt()`'s csh and zsh success arms lost their only exercise
+and the branch coverage fell from 100% to 99%:
+
+```text
+src/pexpect/pxssh.py   220   0   88   2   99%   652->657, 655->657
+```
+
+The mock client now takes the shell as an option instead, passed through
+`login(cmd=...)`, which pxssh does not quote and is documented not to. Worth
+keeping in mind for **2**, **3** and **10**, which are the other pxssh entries:
+this module's tests reach the library through a command line they assemble by
+hand, so a change to how that line is built can disarm a test without failing
+it. The coverage gate is what caught this one, which is the argument for keeping
+it at 100.
 
 ---
 
