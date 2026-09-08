@@ -1,26 +1,100 @@
-"""Tests for :mod:`pexpect.replwrap` that need a REPL to do real work.
+"""Tests for :mod:`pexpect.replwrap` that drive a real REPL.
 
-Reading a formatted man page, waiting out a command that sleeps, and starting
-Python's own interactive shell each cost more than the suite's time budget on
-their own, whatever pexpect does around them.
+Two things put a test in here rather than in ``tests/test_replwrap.py``, and
+both are about the machine rather than about pexpect.
+
+The first is cost. Reading a formatted man page, waiting out a command that
+sleeps, and starting Python's own interactive shell each take more than the
+per-test budget out there, whatever pexpect does around them.
+
+The second is that a shell is not something this repository ships. zsh is
+frequently absent, so ``test_zsh`` skips itself when it is; bash is effectively
+everywhere, but its prompt and its startup files belong to the host, and a test
+that reaches a prompt is at the mercy of both. ``replwrap`` goes to some length
+to neutralise that -- it forces PS1 and hands bash its own rcfile -- and these
+tests are what checks that it succeeds.
 """
 
 import platform
+import re
 import shutil
 import sys
 import unittest
+from pathlib import Path
 
 import pytest
 
 import pexpect
 from pexpect import replwrap
-from tests.test_replwrap import REPLWrapTestBase, skip_pypy
 
 pytestmark = pytest.mark.usefixtures("fast_sleep", "lean_child_env")
 
+skip_pypy = "This test fails on PyPy because of REPL differences"
 
-class REPLWrapIntegrationTestCase(REPLWrapTestBase):
-    """REPL tests whose cost is the REPL, not replwrap."""
+
+class REPLWrapIntegrationTestCase(unittest.TestCase):
+    """Tests whose cost, or whose configuration, is the REPL rather than replwrap."""
+
+    def test_bash(self) -> None:
+        """Run a command in bash, and reject empty input."""
+        bash = replwrap.bash()
+        res = bash.run_command("alias xyzzy=true; alias")
+        assert "alias" in res, res
+
+        try:
+            bash.run_command("")
+        except ValueError:
+            pass
+        else:
+            msg = "Didn't raise ValueError for empty input"
+            raise AssertionError(msg)
+
+    def test_bash_env(self) -> None:
+        """env, which displays PS1=..., should not mess up finding the prompt."""
+        bash = replwrap.bash()
+        res = bash.run_command("export PS1")
+        res = bash.run_command("env")
+        assert "PS1" in res
+        res = bash.run_command("echo $HOME")
+        assert res.startswith("/"), res
+
+    def test_multiline(self) -> None:
+        """Run a multi-line command, and recover the REPL after incomplete input."""
+        bash = replwrap.bash()
+        res = bash.run_command("echo '1 2\n3 4'")
+        assert res.strip().splitlines() == ["1 2", "3 4"]
+
+        # Should raise ValueError if input is incomplete
+        try:
+            bash.run_command("echo '5 6")
+        except ValueError:
+            pass
+        else:
+            msg = "Didn't raise ValueError for incomplete input"
+            raise AssertionError(msg)
+
+        # Check that the REPL was reset (SIGINT) after the incomplete input
+        res = bash.run_command("echo '1 2\n3 4'")
+        assert res.strip().splitlines() == ["1 2", "3 4"]
+
+    def test_existing_spawn(self) -> None:
+        """Wrap a shell the caller spawned instead of one replwrap starts.
+
+        Given a bash spawned by the caller with the bundled rcfile, so that the
+        prompt is predictable whatever the host bash configuration is,
+        When it is handed to :class:`replwrap.REPLWrapper` as an existing spawn,
+        Then the wrapper adopts it and runs commands through it.
+        """
+        bashrc = Path(replwrap.__file__).parent / "bashrc.sh"
+        child = pexpect.spawn("bash", ["--rcfile", str(bashrc)], timeout=5, encoding="utf-8")
+        repl = replwrap.REPLWrapper(
+            child, re.compile("[$#]"), "PS1='{0}' PS2='{1}' PROMPT_COMMAND=''"
+        )
+
+        print(repl)
+        res = repl.run_command("echo $HOME")
+        print(res)
+        assert res.startswith("/"), res
 
     def test_pager_as_cat(self) -> None:
         """PAGER is set to cat, to prevent timeout in ``man sleep``."""

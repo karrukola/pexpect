@@ -1,9 +1,13 @@
-"""Tests for awaiting pexpect matches with ``async_=True``."""
+"""Tests for awaiting pexpect matches with ``async_=True``.
+
+The two that await a command through a replwrap-wrapped bash are in
+``tests/integration/test_async.py``: what they wait on is a shell reaching a
+prompt, which is the host's business and not this suite's.
+"""
 
 import pytest
 
 import pexpect
-from pexpect import replwrap
 
 from . import pexpect_test_case
 
@@ -61,28 +65,3 @@ class AsyncTests(pexpect_test_case.AsyncPexpectTestCase):
         assert await p.expect_exact("1", async_=True) == 0
         assert p.expect_exact("2") == 0
         assert await p.expect_exact("3", async_=True) == 0
-
-    async def test_async_replwrap(self) -> None:
-        """Await a command run through a replwrap-wrapped bash."""
-        bash = replwrap.bash()
-        res = await bash.run_command("time", async_=True)
-        assert "real" in res, res
-
-    async def test_async_replwrap_multiline(self) -> None:
-        """Await a multi-line replwrap command, and recover after incomplete input."""
-        bash = replwrap.bash()
-        res = await bash.run_command("echo '1 2\n3 4'", async_=True)
-        assert res.strip().splitlines() == ["1 2", "3 4"]
-
-        # Should raise ValueError if input is incomplete
-        try:
-            await bash.run_command("echo '5 6", async_=True)
-        except ValueError:
-            pass
-        else:
-            msg = "Didn't raise ValueError for incomplete input"
-            raise AssertionError(msg)
-
-        # Check that the REPL was reset (SIGINT) after the incomplete input
-        res = await bash.run_command("echo '1 2\n3 4'", async_=True)
-        assert res.strip().splitlines() == ["1 2", "3 4"]
