@@ -18,6 +18,7 @@ OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 
 """
 
+import io
 import socket
 import unittest
 from pathlib import Path
@@ -127,6 +128,82 @@ class ExpectTestCase(pexpect_test_case.PexpectTestCase):
         s.close()
         s.close()
         assert s.closed
+
+    def test_read_nonblocking_logs_to_logfile(self) -> None:
+        """Data read from the socket reaches ``logfile``.
+
+        Given a SocketSpawn with a binary ``logfile``, over a socket that
+        will receive data from its peer,
+        When :meth:`SocketSpawn.expect` matches data sent over the socket,
+        Then that data has been written to ``logfile``.
+        """
+        send_socket, recv_socket = socket.socketpair()
+        self.addCleanup(send_socket.close)
+        self.addCleanup(recv_socket.close)
+        logfile = io.BytesIO()
+        s = socket_pexpect.SocketSpawn(recv_socket, timeout=3, logfile=logfile)
+        self.addCleanup(s.close)
+
+        send_socket.sendall(b"hello world")
+        s.expect(b"hello")
+
+        assert b"hello" in logfile.getvalue()
+
+    def test_read_nonblocking_logs_to_logfile_read(self) -> None:
+        """Data read from the socket reaches ``logfile_read``.
+
+        Given a SocketSpawn with a binary ``logfile_read``, over a socket
+        that will receive data from its peer,
+        When :meth:`SocketSpawn.expect` matches data sent over the socket,
+        Then that data has been written to ``logfile_read``.
+        """
+        send_socket, recv_socket = socket.socketpair()
+        self.addCleanup(send_socket.close)
+        self.addCleanup(recv_socket.close)
+        logfile_read = io.BytesIO()
+        s = socket_pexpect.SocketSpawn(recv_socket, timeout=3)
+        s.logfile_read = logfile_read
+        self.addCleanup(s.close)
+
+        send_socket.sendall(b"hello world")
+        s.expect(b"hello")
+
+        assert b"hello" in logfile_read.getvalue()
+
+    def test_expect_with_zero_timeout_raises_pexpect_timeout(self) -> None:
+        """``expect(..., timeout=0)`` raises TIMEOUT, not BlockingIOError.
+
+        Given a SocketSpawn over a socket with nothing waiting to be read,
+        When :meth:`SocketSpawn.expect` is called with ``timeout=0`` (poll),
+        Then :class:`pexpect.TIMEOUT` is raised rather than the underlying
+        ``BlockingIOError`` that a non-blocking socket recv raises.
+        """
+        send_socket, recv_socket = socket.socketpair()
+        self.addCleanup(send_socket.close)
+        self.addCleanup(recv_socket.close)
+        s = socket_pexpect.SocketSpawn(recv_socket, timeout=3)
+        self.addCleanup(s.close)
+
+        with pytest.raises(pexpect.TIMEOUT):
+            s.expect(b"x", timeout=0)
+
+    def test_read_nonblocking_with_zero_timeout_raises_pexpect_timeout(self) -> None:
+        """``read_nonblocking(size, 0)`` raises TIMEOUT, not BlockingIOError.
+
+        Given a SocketSpawn over a socket with nothing waiting to be read,
+        When :meth:`SocketSpawn.read_nonblocking` is called directly with a
+        timeout of 0 (poll),
+        Then :class:`pexpect.TIMEOUT` is raised rather than the underlying
+        ``BlockingIOError`` that a non-blocking socket recv raises.
+        """
+        send_socket, recv_socket = socket.socketpair()
+        self.addCleanup(send_socket.close)
+        self.addCleanup(recv_socket.close)
+        s = socket_pexpect.SocketSpawn(recv_socket, timeout=3)
+        self.addCleanup(s.close)
+
+        with pytest.raises(pexpect.TIMEOUT):
+            s.read_nonblocking(1, 0)
 
 
 if __name__ == "__main__":

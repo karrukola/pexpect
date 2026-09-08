@@ -178,7 +178,9 @@ class SocketSpawn(SpawnBase[AnyStr]):
                     self.flag_eof = True
                     msg = "Socket closed"
                     raise EOF(msg)
-                return self._decoder.decode(s, final=False)
-        except TimeoutError as err:
+                decoded = self._decoder.decode(s, final=False)
+                self._log(decoded, "read")
+                return decoded
+        except (TimeoutError, BlockingIOError) as err:
             msg = "Timeout exceeded."
             raise TIMEOUT(msg) from err
