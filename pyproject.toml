@@ -1,6 +1,7 @@
 [project]
 name = "pexpect"
 dynamic = ["version"]
+readme = "README.rst"
 requires-python = ">=3.10"
 dependencies = [
     "ptyprocess>=0.7.0",
