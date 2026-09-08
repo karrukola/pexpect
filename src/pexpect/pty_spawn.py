@@ -348,6 +348,9 @@ class spawn(SpawnBase[AnyStr]):
         # make the string work below untypeable.
         if args == []:
             resolved_args = split_command_line(command)
+            if not resolved_args:
+                msg = "The command to be executed is empty."
+                raise ExceptionPexpect(msg)
             resolved_command = resolved_args[0]
         else:
             # Make a shallow copy of the args list.

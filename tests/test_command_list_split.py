@@ -40,9 +40,21 @@ class SplitCommandLineTestCase(pexpect_test_case.PexpectTestCase):
             ("'one one'", 1),
             (r"one\"one", 1),
             (r"This\' is a\'\ test", 3),
+            ("   ", 0),
+            (" one", 1),
+            ("one ", 1),
+            ("  one   two  ", 2),
         )
         for command, size in commands_and_sizes:
             assert len(pexpect.split_command_line(command)) == size, command
+
+    def test_split_whitespace(self) -> None:
+        """Leading, trailing and repeated whitespace are consumed, not split on."""
+        assert pexpect.split_command_line("") == []
+        assert pexpect.split_command_line("   ") == []
+        assert pexpect.split_command_line(" ls") == ["ls"]
+        assert pexpect.split_command_line("ls ") == ["ls"]
+        assert pexpect.split_command_line("  one   two  ") == ["one", "two"]
 
 
 if __name__ == "__main__":

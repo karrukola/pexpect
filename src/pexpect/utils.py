@@ -76,7 +76,7 @@ def split_command_line(command_line: str) -> list[str]:
     """
     arg_list = []
     arg = ""
-    state = _STATE_BASIC
+    state = _STATE_WHITESPACE
 
     for c in command_line:
         if state == _STATE_ESC:

@@ -46,6 +46,21 @@ class TestCaseConstructor(pexpect_test_case.PexpectTestCase):
         pexpect.spawn(timeout=10, command="/bin/ls")
         pexpect.spawn(args=[], command="/bin/ls")
 
+    def test_empty_command_raises_pexpect_exception(self) -> None:
+        """Raise ExceptionPexpect, not a bare IndexError, for an empty command."""
+        with pytest.raises(pexpect.ExceptionPexpect):
+            pexpect.spawn("")
+        with pytest.raises(pexpect.ExceptionPexpect):
+            pexpect.spawn("   ")
+
+    def test_leading_whitespace_resolves_same_command(self) -> None:
+        """A leading space in the command string is not mistaken for an argument."""
+        p1 = pexpect.spawn(" ls")
+        p2 = pexpect.spawn("ls")
+        assert p1.command == p2.command
+        p1.expect(pexpect.EOF)
+        p2.expect(pexpect.EOF)
+
 
 if __name__ == "__main__":
     unittest.main()
