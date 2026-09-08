@@ -27,7 +27,9 @@ import signal
 import sys
 import tempfile
 import time
+import traceback
 import unittest
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 from unittest import mock
 
@@ -630,6 +632,65 @@ class TestCaseMisc(pexpect_test_case.PexpectTestCase):
         else:
             msg = "Should have raised an exception."
             raise AssertionError(msg)
+
+    def test_exception_tb_excludes_all_pexpect_package_frames(self) -> None:
+        """get_trace() drops every frame located inside the pexpect package.
+
+        ``expect()`` and ``expect_list()`` moved out of ``pexpect/__init__.py``
+        into ``spawnbase.py`` in 4.0; the filter must follow code around the
+        package rather than naming individual modules by hand.
+        """
+        package_dir = str(Path(pexpect.__file__).parent)
+        p = pexpect.spawn("sleep 0.01")
+        try:
+            p.expect("BLAH")
+        except pexpect.ExceptionPexpect as e:
+            tb = e.get_trace()
+        else:
+            msg = "Should have raised an exception."
+            raise AssertionError(msg)
+        # No frame from inside the pexpect package survives the filter...
+        assert package_dir not in tb
+        # ...but the caller's own frame does.
+        assert "test_misc.py" in tb
+
+    def test_exception_tb_keeps_intermediate_caller_frame(self) -> None:
+        """get_trace() keeps a caller's own intermediate frame, by name."""
+
+        def nested_function(spawn_instance: pexpect.spawn) -> None:
+            spawn_instance.expect("BLAH")
+
+        p = pexpect.spawn("sleep 0.01")
+        try:
+            nested_function(p)
+        except pexpect.ExceptionPexpect as e:
+            tb = e.get_trace()
+        else:
+            msg = "Should have raised an exception."
+            raise AssertionError(msg)
+        assert "nested_function" in tb
+
+    def test_exception_tb_empty_when_raised_wholly_inside_pexpect(self) -> None:
+        """A traceback confined to pexpect's own frames collapses to "" ."""
+        package_dir = Path(pexpect.__file__).parent
+        fake_frames = [
+            traceback.FrameSummary(str(package_dir / "spawnbase.py"), 10, "expect"),
+            traceback.FrameSummary(str(package_dir / "expect.py"), 20, "expect_loop"),
+        ]
+
+        def raise_it() -> None:
+            msg = "boom"
+            raise pexpect.ExceptionPexpect(msg)
+
+        try:
+            raise_it()
+        except pexpect.ExceptionPexpect as e:
+            with mock.patch("traceback.extract_tb", return_value=fake_frames):
+                tb = e.get_trace()
+        else:
+            msg = "Should have raised an exception."
+            raise AssertionError(msg)
+        assert tb == ""
 
 
 if __name__ == "__main__":

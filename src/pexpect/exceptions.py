@@ -2,6 +2,9 @@
 
 import sys
 import traceback
+from pathlib import Path
+
+_PACKAGE_DIR = str(Path(__file__).parent)
 
 
 class ExceptionPexpect(Exception):
@@ -23,11 +26,7 @@ class ExceptionPexpect(Exception):
         included.
         """
         frames = traceback.extract_tb(sys.exc_info()[2])
-        outside = [
-            item
-            for item in frames
-            if ("pexpect/__init__" not in item[0]) and ("pexpect/expect" not in item[0])
-        ]
+        outside = [item for item in frames if _PACKAGE_DIR not in item[0]]
         return "".join(traceback.format_list(outside))
 
 
