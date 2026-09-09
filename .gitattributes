@@ -1,0 +1,8 @@
+# This suite reads data files as bytes and compares them against literals with
+# `\n` in them -- tests/TESTDATA.txt and the .vt captures -- and
+# src/pexpect/bashrc.sh is sourced by a shell that reads a trailing CR as part
+# of the command. A checkout made with core.autocrlf=true, the usual setting on
+# Windows, breaks both. So the working tree is LF whatever the developer's git
+# is configured to do, and the repository says so rather than leaving it to
+# each clone.
+* text=auto eol=lf
