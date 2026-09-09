@@ -233,8 +233,18 @@ class ExpectTestCase(pexpect_test_case.PexpectTestCase):
             sock = socket.socket(self.af, socket.SOCK_STREAM)
             sock.connect((self.host, self.port))
             session = self.spawn(sock, timeout=_READ_TIMEOUT)
-            # Get all data from server
-            session.read_nonblocking(size=4096)
+            # The server writes the motd and the first prompt as two separate
+            # sends, so one read is not guaranteed to see both: a read that
+            # lands between them returns the motd alone and leaves the prompt
+            # queued, where it satisfies the read below that has to time out.
+            # This process would then exit 0 without ever setting `timed_out`,
+            # and the caller -- which waits on that event with no deadline of
+            # its own -- would spin until the suite's per-test budget killed it.
+            # Read until the whole greeting is in.
+            greeting = self.motd + self.prompt1
+            seen = b""
+            while len(seen) < len(greeting):
+                seen += session.read_nonblocking(size=4096)
             all_read.set()
             # This read should timeout
             session.read_nonblocking(size=4096)
