@@ -172,14 +172,17 @@ class InteractTestCase(pexpect_test_case.PexpectTestCase):
         p.expect("READY")
         p.send("hi\r")
         # cat echoes the line back twice: once as the pty's own local echo,
-        # then again as cat itself copies stdin to stdout.
-        p.expect_exact("hi")
+        # then again as cat itself copies stdin to stdout. One wait per echo,
+        # rather than one wait for both: expect_exact() consumes what it
+        # matches, so a first wait for "hi" leaves only "\r\nhi\r\n" behind
+        # and a second wait for the pair can never be satisfied.
+        p.expect_exact("hi\r\n")
         if not os.environ.get("CI", None):
             # On CI platforms, we sometimes miss trailing stdout from the
             # chain of child processes (see test_interact_escape_none above
             # for the same workaround), so the second echo is not guaranteed
             # to have landed by the time we escape.
-            p.expect_exact("hi\r\nhi\r\n")
+            p.expect_exact("hi\r\n")
         p.sendcontrol("]")  # chr(29), the escape character used by --logfile
 
         def read_value(name: str) -> str:
