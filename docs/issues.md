@@ -5,13 +5,14 @@ repository, later while taking the test suite to 100% line and branch coverage,
 later still while annotating the package for `mypy`, then while getting the
 suite to run clean on 3.10 through 3.14, then in a review pass whose only task
 was to look for defects, then while making the suite fail on any warning it
-raises, and last while moving CI onto the nox sessions. Every entry from the first four was left alone at the time it was
+raises, then while moving CI onto the nox sessions, and last while getting
+`nox` to pass on Windows. Every entry from the first four was left alone at the time it was
 found, because fixing it would change runtime behaviour and that was out of
 scope for all of them — the lint work was required to be
 behaviour-preserving, the coverage work to add tests rather than change the
 library, and the typing work to add annotations rather than either.
 
-**Twenty-eight are now fixed**, and every entry says which it is. Six came from
+**Thirty-one are now fixed**, and every entry says which it is. Six came from
 the earlier passes: 21, 27, 29 and 30 during the typing pass, because the
 annotations could not describe them without either stating something untrue
 about the code or preserving the defect behind a cast; then 31, which stopped
@@ -28,17 +29,21 @@ leaves alone for a reason it states: 40 needs a maintainer's decision about a
 documented contract, 47 is not worth the changelog line, 48 is release tooling,
 and 49 was found during the implementation and has not been through the review
 the rest had. Then 51 and 52, the warnings pass's own, fixed the same
-way. The last six, 53 to 58, are the CI pass's, and were fixed by the rewrite
+way. Six, 53 to 58, are the CI pass's, and were fixed by the rewrite
 that found them: five of them are defects in how CI and the noxfile were
 configured rather than in anything the library does, and the sixth is what the
-package was shipping. Entries 1 to 20 and 22 to 26 and 28 are still
+package was shipping. The last three, 59 to 61, are the Windows pass's, and are
+configuration too — a type check aimed at the wrong platform, a repository that
+did not say what its line endings are, and a conftest that could not be
+imported there. Entries 1 to 20, 22 to 26, 28, and 62 and 63 are still
 outstanding.
 
 Line numbers in the first six sections refer to the tree as of the lint pass and
 were each verified against the source, not inferred from the rule that surfaced
 them; the review pass's own section and the warnings pass's state the current
 ones. The CI pass's cite the tree it replaced, since the lines it quotes from
-`.github/workflows/ci.yml` are lines that no longer exist. The library paths
+`.github/workflows/ci.yml` are lines that no longer exist, and the Windows
+pass's cite the tree it found, for the same reason. The library paths
 are given under `src/pexpect/`, its location since the switch to the src layout;
 that move was a pure rename, so the line numbers are unaffected by it.
 
@@ -1679,6 +1684,142 @@ of what used to run it -- which is what this table is now for.
 | The `travis-ci.org` badge heading `README.rst` and `doc/index.rst` | `b86fced` | A broken image on the repository page and in the documentation, for years. It now points at `karrukola/pexpect`'s own workflow, which is the choice this row used to be waiting on. |
 | `tools/teamcity-runtests.sh`, `tools/teamcity-coverage-report.sh` | `8b49489` | `mkvirtualenv`, `python setup.py install` and `--cov-config .coveragerc`: a virtualenvwrapper, a build backend and a config file the project no longer has. No TeamCity build configuration accompanied them into the repository, so what they were wired into is not something the checkout can say. |
 | `coveralls` (`[dependency-groups] dev`) | `26dbbb2` | Installed for a service whose only callers were the two rows above. Nothing in the noxfile or the workflow ever invoked it, and dropping it takes twelve packages out of every environment nox builds. |
+
+---
+
+## Found while getting the suite to run on Windows (2026-09-09)
+
+`nox` on a Windows checkout failed every session it has. `lint` ended in 338
+mypy errors across 46 files, not one of them about anything the code does
+wrong. `test` could not collect a single test, because `tests/conftest.py`
+imports `pexpect.pty_spawn` at module scope and `pty` is not importable there.
+Once it could, the comparisons against bytes read from `tests/TESTDATA.txt`
+failed on line endings the clone had rewritten. And `collate_coverage` failed
+at a 100% floor that a subset of the suite cannot reach.
+
+Five defects, **three of them fixed**: 59, 60 and 61 are configuration this
+repository was missing, and 62 and 63 are what pexpect itself does on Windows,
+left alone because changing either is a change to a documented contract rather
+than a fix.
+
+What runs there now is 92 of the suite's 391 tests -- 81 that pass and 11 that
+skip -- on 3.10 through 3.14, reaching 46.23% coverage against
+`_WINDOWS_COVERAGE_FLOOR` in `noxfile.py`. `tests/conftest.py` names the
+modules it drops and gives a reason for each; the short version is that the pty
+API is most of this suite and Windows has no pty. The 100% in `pyproject.toml`
+is left as the statement it is, about a run that has the whole suite.
+
+CI still runs on `ubuntu-latest` and nothing else, so none of this is verified
+by a workflow. It is verified by running `nox` on Windows, which is now
+something a developer can do.
+
+### 59. mypy analysed for the platform it was running on
+
+**`pyproject.toml:236`** -- **fixed**
+
+`[tool.mypy]` set `check_untyped_defs` and nothing else, so mypy took its
+`platform` from the interpreter that invoked it. On Windows that takes
+`termios`, `tty`, `fcntl`, `select.poll`, `os.getuid` and `signal.SIGHUP` out
+of the stubs, along with `pexpect.spawn`, `pexpect.spawnu`, `pexpect.run` and
+`pexpect.runu` -- `__init__` exports those four behind a
+`sys.platform != "win32"` check, so on Windows they really are absent. 338
+errors in 46 files, every one of them mypy correctly answering a question about
+a platform this library does not run on.
+
+`platform = "linux"`. A type check should reach the same verdict on every
+machine, and the verdict worth reaching is the one that describes where the
+code runs. It changes nothing about the Linux CI run that was already producing
+it.
+
+### 60. The repository did not say what its line endings are
+
+**no `.gitattributes`** -- **fixed**
+
+With `core.autocrlf=true`, which is what git's Windows installer offers and
+therefore what most Windows clones have, every text file is checked out CRLF.
+Two things in this tree do not survive that. `tests/TESTDATA.txt` and the three
+`.vt` captures are read as bytes and compared against literals containing
+`\n`, so `test_socket_pexpect::test_socket` failed with
+`assert b" END\r\n" == b" END\n"`; and `src/pexpect/bashrc.sh`, which
+`replwrap.bash()` has the child source, is read by a shell that takes a
+trailing CR as part of the command.
+
+`* text=auto eol=lf`. The index was already LF, so nothing had been committed
+wrong -- this only settles what a checkout puts on disk, which is the thing
+that was never stated. An existing clone needs
+`git rm -r --cached . && git reset --hard` in a clean tree to pick it up.
+
+### 61. The suite could not be collected at all on Windows
+
+**`tests/conftest.py:45`** -- **fixed**
+
+`from pexpect import pty_spawn`, at module scope, for two helpers that need it:
+the child the per-test budget is calibrated from, and the `killed_pty_children`
+fixture. `pty_spawn` imports `pty`, which imports `tty`, which imports
+`termios`, which does not exist on Windows -- so `pytest tests` ended in
+`ImportError while loading conftest` before collecting the 92 tests that have
+nothing to do with a pty.
+
+The import is behind the platform check now, and so is the branch of
+`_time_one_child` that uses it: off POSIX the budget is calibrated from an
+empty interpreter instead of a pty child, that being about the cheapest child a
+Windows machine can start. Returning `_BUDGET_FLOOR` there was the first
+attempt and was wrong: 150 ms is tighter than the budget any POSIX machine
+earns, and `test_torturet` costs 110 ms on 3.10 under coverage's tracing, so it
+timed out under `coverage run` while passing without it.
+
+The modules that cannot run there are dropped at collection rather than skipped
+test by test, because most of them raise while being imported and a skip mark
+never runs when the module carrying it cannot be imported.
+
+### 62. `fdspawn.read_nonblocking` ignores its timeout off POSIX and blocks forever
+
+**`src/pexpect/fdpexpect.py:212`**
+
+```python
+if os.name == "posix":  # pragma: no branch
+    ...
+    rlist, wlist, xlist = select_ignore_interrupts(rlist, wlist, xlist, timeout)
+    if self.child_fd not in rlist:
+        raise TIMEOUT("Timeout exceeded.")
+return cast("AnyStr", super().read_nonblocking(size))
+```
+
+The `select` is the only thing implementing the timeout and it is inside the
+guard, so on any other platform the method falls through to
+`SpawnBase.read_nonblocking`, which is a bare `os.read` -- whose docstring
+says, accurately, "The timeout parameter is ignored." A caller who passes a
+timeout gets none, and on a descriptor that never becomes readable the call
+never returns. `tests/test_filedescriptor.py::test_read_nonblocking_times_out`
+opens a pipe nothing writes to and hangs there, which is how this was found;
+that test is skipped on Windows rather than the library changed.
+
+Not fixed. Honouring the timeout on Windows means a mechanism per kind of
+handle -- `select` takes sockets only, a pipe wants `PeekNamedPipe`, a regular
+file is always ready -- which is a feature for `fdspawn` to grow rather than a
+line to change. The `# pragma: no branch` is right as it stands: the branch has
+one outcome per platform, and coverage is measured per platform.
+
+### 63. `which()` accepts any file that exists on Windows
+
+**`src/pexpect/utils.py:50`**
+
+```python
+return os.access(fpath, os.X_OK)
+```
+
+Windows has no execute permission bit, and `os.access` with `X_OK` there
+answers the same as `F_OK`: True for anything that exists. So
+`is_executable_file` is a file-exists test on Windows, and `which("notes.txt")`
+hands back a path as soon as that file is on `PATH` -- a path that then goes to
+`PopenSpawn` as a command. Four tests in `tests/test_which.py` state the POSIX
+answer, arranging for a non-executable file with `chmod(0o400)`, which on
+Windows only clears the write bit; all four are skipped there, and the write
+bit is why three of them failed in cleanup rather than in the assertion.
+
+Not fixed. What a Windows `which()` should consult is `PATHEXT`, the way
+`shutil.which` does, and adopting that answer is a decision about a documented
+contract -- the same reason **40** is still open.
 
 ---
 
