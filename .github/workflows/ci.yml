@@ -5,6 +5,13 @@ name: CI
 # then builds one environment per entry with uv, which downloads any interpreter the
 # runner does not already have. Adding 3.15 to the matrix is an edit to that one
 # file, and nothing in this workflow has to follow it.
+#
+# The operating system matrix does live here, because a runner image is the one
+# thing a nox session cannot choose for itself. Each job runs on both, and the
+# same two commands cover both: pexpect is a POSIX library, so a Windows run
+# lints the whole tree and tests the part of it Windows can reach -- see
+# tests/conftest.py, which holds the list of modules it drops and a reason for
+# each, and DEVELOPERS.rst, which says what the remainder covers.
 
 on:
   push:
@@ -27,7 +34,14 @@ permissions:
 jobs:
   lint:
     name: Lint
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.os }}
+    strategy:
+      # Both legs run to the end. A break on one platform is a fact about that
+      # platform, and cancelling the other leg to save a few minutes hides
+      # whether the break is everywhere or only there.
+      fail-fast: false
+      matrix:
+        os: [ ubuntu-latest, windows-latest ]
 
     steps:
     - uses: actions/checkout@v5
@@ -58,12 +72,18 @@ jobs:
       if: ${{ !cancelled() }}
       uses: actions/upload-artifact@v4
       with:
-        name: mypy-reports
+        # One upload per leg, so the name has to carry the runner: two steps
+        # uploading `mypy-reports` in one run is an error, not a merge.
+        name: mypy-reports-${{ matrix.os }}
         path: reports/
 
   test:
     name: Test
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ ubuntu-latest, windows-latest ]
 
     steps:
     - uses: actions/checkout@v5
@@ -83,7 +103,12 @@ jobs:
     # skip guard; that test has been passing on these runners since CI moved here, so
     # the page is present, but a test's dependency is better installed than
     # inherited -- and `man --where sleep` is what notices if that ever changes.
+    #
+    # Linux only, and not because the packages are: both tests live in
+    # tests/integration/test_replwrap.py, which is one of the modules
+    # tests/conftest.py drops on Windows, so neither is collected there.
     - name: Install the programs the suite drives
+      if: runner.os == 'Linux'
       run: |
         sudo apt-get update
         sudo apt-get install --yes --no-install-recommends man-db zsh
@@ -91,8 +116,10 @@ jobs:
 
     # One session per interpreter, each measuring coverage; the collate_coverage
     # session it notifies combines them and writes the XML and HTML published below.
-    # The 100% floor is report.fail_under in pyproject.toml, so a regression fails
-    # this step rather than waiting for a reviewer to read an artifact.
+    # The floor is report.fail_under in pyproject.toml on Linux and
+    # _WINDOWS_COVERAGE_FLOOR in the noxfile on Windows, which cannot run the whole
+    # suite; either way a regression fails this step rather than waiting for a
+    # reviewer to read an artifact.
     - name: nox -s test
       run: uv run --locked nox -s test
 
@@ -100,7 +127,7 @@ jobs:
       if: ${{ !cancelled() }}
       uses: actions/upload-artifact@v4
       with:
-        name: coverage-reports
+        name: coverage-reports-${{ matrix.os }}
         path: |
           coverage-reports/
           htmlcov/
