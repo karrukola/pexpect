@@ -1862,6 +1862,45 @@ the surviving wait is for `hi\r\n` rather than for `hi`, so the
 `log_read.startswith("hi\r\n")` assertion at the end of the test no longer
 depends on a newline that nothing had waited for.
 
+### The per-test budget could not see what the tests actually cost
+
+Also not a defect in pexpect, and not numbered. With the test above fixed, a
+full `nox` still lost a test about one run in eight, to
+
+    Failed: Timeout (>0.2338...s) from pytest-timeout
+
+in `tests/test_ansi.py::AnsiTestCase::test_torturet` or in
+`tests/test_ctrl_chars.py::TestCtrlChars::test_control_chars`, whichever the
+scheduler picked on.
+
+`tests/conftest.py` sizes the per-test budget as
+`max(_BUDGET_FLOOR, _CHILDREN_PER_TEST x cost of one spawn-and-close of cat)`,
+measured at collection time so that it follows the machine rather than being
+written down. The measurement is sound for what it measures and blind to the
+rest: the calibration child is exec'd, so the coverage tracer never reaches it,
+while every test the budget covers runs inside the traced parent. On the machine
+this was found on, the calibration child cost 16.5 ms bare and 18.1 ms under
+`coverage run` -- a tenth dearer -- while `test_torturet`, which drives no child
+at all, went from 14 ms to 230 ms. Against a budget of 12 x 19.5 ms = 234 ms
+that is a coin flip, and every `nox` test session runs `coverage run -m pytest`.
+
+Fixed by raising `_BUDGET_FLOOR` from 0.15 to 1.0. The floor is the right lever
+because it exists to stop the budget following a fast machine down, and a
+machine fast enough for it to bind is one whose children are cheap -- which is
+exactly when the children term stops covering in-process work. On a slow
+machine, 290 ms a child and so a budget of 3.5 s, it never binds and nothing
+changes.
+
+### Two that this pass found and did not fix here
+
+Both are flakes in the suite, neither is a sizing problem, and neither is
+touched by the entry above.
+
+| Where | What |
+|---|---|
+| `tests/test_socket.py::test_multiple_interrupts`, `tests/test_socket_fd.py::test_interrupt` | `Failed: Timeout (>1.0s)` against a budget these tests normally clear twenty times over: both cost 40 to 50 ms. Each spins `os.kill(pid, SIGWINCH)` paced only by `Event.wait(0.001)` until a child sets the event, so the loop is an unbounded real-time race whose own signals interrupt the progress it waits for. A wall clock of any size loses to it eventually. |
+| `tests/integration/test_replwrap.py::test_existing_spawn` | `ValueError: Continuation prompt found - input was incomplete: echo $HOME`, and not a timeout at all -- this test is under the 60 s budget of its own directory. The prompt is matched with `re.compile("[$#]")` and the command contains a `$`, so `_expect_prompt()` can match the terminal's echo of the command rather than the prompt that follows it. |
+
 ---
 
 ## Found while adding the Windows CI legs (2026-09-09)
