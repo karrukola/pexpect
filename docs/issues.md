@@ -5,11 +5,12 @@ repository, later while taking the test suite to 100% line and branch coverage,
 later still while annotating the package for `mypy`, then while getting the
 suite to run clean on 3.10 through 3.14, then in a review pass whose only task
 was to look for defects, then while making the suite fail on any warning it
-raises, and last while moving CI onto the nox sessions. Every entry from the first four was left alone at the time it was
-found, because fixing it would change runtime behaviour and that was out of
-scope for all of them — the lint work was required to be
-behaviour-preserving, the coverage work to add tests rather than change the
-library, and the typing work to add annotations rather than either.
+raises, then while moving CI onto the nox sessions, and last while running the
+suite on a machine that is not CI. Every entry from the first four was left
+alone at the time it was found, because fixing it would change runtime
+behaviour and that was out of scope for all of them — the lint work was
+required to be behaviour-preserving, the coverage work to add tests rather than
+change the library, and the typing work to add annotations rather than either.
 
 **Twenty-eight are now fixed**, and every entry says which it is. Six came from
 the earlier passes: 21, 27, 29 and 30 during the typing pass, because the
@@ -1679,6 +1680,44 @@ of what used to run it -- which is what this table is now for.
 | The `travis-ci.org` badge heading `README.rst` and `doc/index.rst` | `b86fced` | A broken image on the repository page and in the documentation, for years. It now points at `karrukola/pexpect`'s own workflow, which is the choice this row used to be waiting on. |
 | `tools/teamcity-runtests.sh`, `tools/teamcity-coverage-report.sh` | `8b49489` | `mkvirtualenv`, `python setup.py install` and `--cov-config .coveragerc`: a virtualenvwrapper, a build backend and a config file the project no longer has. No TeamCity build configuration accompanied them into the repository, so what they were wired into is not something the checkout can say. |
 | `coveralls` (`[dependency-groups] dev`) | `26dbbb2` | Installed for a service whose only callers were the two rows above. Nothing in the noxfile or the workflow ever invoked it, and dropping it takes twelve packages out of every environment nox builds. |
+
+---
+
+## Found while running the suite off CI (2026-09-09)
+
+### The one that could only pass on CI
+
+Not a defect in pexpect, and not numbered for that reason. `nox` was green on
+GitHub Actions and failed on a developer's machine, on every interpreter in the
+matrix, in
+`tests/integration/test_interact.py::InteractTestCase::test_interact_str_mode_with_logfile`.
+
+The child chain the `--logfile` mode builds -- `interact.py` running
+`/bin/sh -c "echo READY; exec cat"` -- echoes a typed line back exactly twice,
+once as the inner pty's own local echo and once as `cat` copying stdin to
+stdout, so what reaches the caller after the banner is `hi\r\nhi\r\n`. The test
+waited for it as
+
+    p.expect_exact("hi")
+    if not os.environ.get("CI", None):
+        p.expect_exact("hi\r\nhi\r\n")
+
+and `expect_exact()` consumes what it matches. The first call took the first
+`hi`, leaving `\r\nhi\r\n` in the buffer, so the second asked for a third echo
+that no one was going to send and the spawn's own `timeout=5` ended the test --
+well inside the 60 s budget `tests/integration` sets, which is why the failure
+read as pexpect timing out rather than as pytest killing a hung test.
+
+Green on CI only because `CI` is set there and the second wait is skipped
+whole, which is also what kept it from being caught when it was written, in
+`059a254`: that commit's own verification ran under the workflow. No local run
+of the suite has ever passed this test.
+
+Now one wait per echo, the second still skipped on CI, which is what the
+comment above it always said the test was doing. It also tightens the CI path:
+the surviving wait is for `hi\r\n` rather than for `hi`, so the
+`log_read.startswith("hi\r\n")` assertion at the end of the test no longer
+depends on a newline that nothing had waited for.
 
 ---
 
