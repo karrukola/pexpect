@@ -35,6 +35,7 @@ import contextlib
 import os
 import pathlib
 import signal
+import sys
 import time
 from typing import TYPE_CHECKING
 
@@ -42,10 +43,19 @@ import pytest
 from pytest_time.instant_sleep import InstantSleep
 
 import pexpect
-from pexpect import pty_spawn
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterator
+
+# pexpect's pty API is POSIX-only: `pty_spawn` imports `pty`, which imports
+# `termios`, and `pexpect.spawn` is exported from `__init__` behind the same
+# platform check. Most of this suite drives it, and on Windows those modules are
+# dropped at collection rather than skipped at runtime, because what fails there
+# is their imports -- see _POSIX_ONLY. What is left is the part of pexpect that
+# Windows does support, and none of it asks for the two things guarded here.
+_ON_POSIX = sys.platform != "win32"
+if _ON_POSIX:
+    from pexpect import pty_spawn
 
 # tests/integration budgets itself; see pytest_collection_modifyitems below.
 _SLOW_DIR = pathlib.Path(__file__).parent / "integration"
@@ -98,6 +108,55 @@ _CALIBRATION_RUNS = 3
 _CALIBRATION_COMMAND = "cat"
 
 
+# The modules of this suite that cannot run on Windows, dropped at collection
+# rather than skipped test by test: most of them raise while being imported,
+# and a skip mark never runs when the module that carries it cannot be
+# imported. Three reasons, in order:
+#
+# * The pty API, driven directly or through replwrap, run or pxssh.
+#   `pexpect.pty_spawn` imports `pty`, which imports `termios`, and
+#   `pexpect.spawn` is exported from `__init__` behind the same platform check.
+#   tests/integration is all of this.
+# * `os.fork`, which `test_socket` needs to put its socket server in a
+#   subprocess -- the server is a bound method of the test case, which the
+#   spawn start method cannot carry -- and `test_socket_fd` runs that same
+#   suite over a file descriptor.
+# * The POSIX programs `test_popen_spawn` drives: `cat`, `echo`, `sleep`,
+#   `ls -l /bin`, plus SIGKILL and SIGTERM delivery. `PopenSpawn` itself is the
+#   class pexpect offers on Windows and works there; what its tests reach for
+#   does not.
+#
+# What is left covers the rest of what pexpect supports on Windows: fdspawn,
+# SocketSpawn, the searchers, the screen emulation and the FSM.
+_POSIX_ONLY = (
+    "integration",
+    "test_async.py",
+    "test_constructor.py",
+    "test_ctrl_chars.py",
+    "test_delay.py",
+    "test_dotall.py",
+    "test_env.py",
+    "test_expect.py",
+    "test_isalive.py",
+    "test_log.py",
+    "test_misc.py",
+    "test_missing_command.py",
+    "test_popen_spawn.py",
+    "test_pxssh.py",
+    "test_replwrap.py",
+    "test_repr.py",
+    "test_run.py",
+    "test_socket.py",
+    "test_socket_fd.py",
+    "test_timeout_pattern.py",
+    "test_unicode.py",
+    "test_winsize.py",
+)
+
+if not _ON_POSIX:
+    collect_ignore = list(_POSIX_ONLY)
+
+
 class _YieldingSleep(InstantSleep):
     """Instant sleep that still lets the kernel act on a signal."""
 
@@ -126,6 +185,10 @@ def _measured_budget() -> float:
     ``fast_sleep`` -- because otherwise it would be timing pexpect's settling
     delays, which no test outside that directory ever pays in full.
     """
+    if not _ON_POSIX:
+        # Nothing left to collect there spawns a pty child, so there is nothing
+        # to time; the floor is what the surviving tests are measured against.
+        return _BUDGET_FLOOR
     with pytest.MonkeyPatch.context() as patcher:
         _YieldingSleep().install(patcher)
         try:
