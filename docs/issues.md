@@ -1891,15 +1891,69 @@ exactly when the children term stops covering in-process work. On a slow
 machine, 290 ms a child and so a budget of 3.5 s, it never binds and nothing
 changes.
 
-### Two that this pass found and did not fix here
+### The suite's own greeting race, seen as a timeout
 
-Both are flakes in the suite, neither is a sizing problem, and neither is
-touched by the entry above.
+Also not a defect in pexpect, and not numbered. With the budget raised, a full
+`nox` still lost `tests/test_socket.py::test_multiple_interrupts`, or one of
+the three sibling tests in `tests/test_socket_fd.py`, about one run in eight
+to
 
-| Where | What |
-|---|---|
-| `tests/test_socket.py::test_multiple_interrupts`, `tests/test_socket_fd.py::test_interrupt` | `Failed: Timeout (>1.0s)` against a budget these tests normally clear twenty times over: both cost 40 to 50 ms. Each spins `os.kill(pid, SIGWINCH)` paced only by `Event.wait(0.001)` until a child sets the event, so the loop is an unbounded real-time race whose own signals interrupt the progress it waits for. A wall clock of any size loses to it eventually. |
-| `tests/integration/test_replwrap.py::test_existing_spawn` | `ValueError: Continuation prompt found - input was incomplete: echo $HOME`, and not a timeout at all -- this test is under the 60 s budget of its own directory. The prompt is matched with `re.compile("[$#]")` and the command contains a `$`, so `_expect_prompt()` can match the terminal's echo of the command rather than the prompt that follows it. |
+    Failed: Timeout (>1.0s) from pytest-timeout
+
+against a budget those tests normally clear twenty times over: both cost 40 to
+50 ms. The budget was not the problem, and neither was the signal loop the
+traceback pointed at.
+
+`socket_fn()`, which runs in a subprocess, read once, called that "Get all data
+from server", set `all_read`, and then made a second read that the test
+requires to raise `TIMEOUT`. The server writes the greeting as two sends:
+
+    conn.send(self.motd)
+    conn.send(self.prompt1)
+
+so a read landing between them returns the motd alone and leaves the prompt
+queued -- where it satisfies the second read, which returns data instead of
+timing out. The subprocess then exits 0 without setting `timed_out`, and both
+callers wait on that event with no deadline of their own:
+`test_multiple_interrupts` spins `os.kill` until the budget kills it,
+`test_interrupt` blocks for `_STARTUP_TIMEOUT`.
+
+Instrumenting the spin loop showed it plainly: 18 to 19 iterations and 0.0208 s
+when the subprocess reports its timeout, and a linear climb at 1.14 ms an
+iteration that never ends when it does not. Forcing the short read the race
+produces by chance reproduced both failures in 2.23 s. Fixed by reading until
+the whole greeting is in; the greeting arriving seven bytes at a time passes.
+
+### The prompt-change command's own echo, read as two prompts
+
+Also not a defect in pexpect, and not numbered.
+`tests/integration/test_replwrap.py::test_existing_spawn` failed about one full
+`nox` in twenty-four with
+
+    ValueError: Continuation prompt found - input was incomplete:
+    echo $HOME
+
+and not on a timeout at all -- it is under the 60 s budget of its own
+directory.
+
+The test spawned bash without `echo=False` and left it to
+`REPLWrapper.__init__` to turn echo off. That is racy for a REPL which
+configures the terminal itself: bash sets echo as it starts, and if that write
+lands after `setecho(False)` then echo is back on when the wrapper sends
+
+    PS1='[PEXPECT_PROMPT>' PS2='[PEXPECT_PROMPT+' PROMPT_COMMAND=''
+
+whose text contains both of the strings `_expect_prompt()` searches for. The
+echo of it is read as two prompts: `__init__` matches the PS1 being set,
+leaving `[PEXPECT_PROMPT+` in the buffer, and the next `run_command()` reads
+that as a continuation prompt.
+
+Forcing echo to stay on reproduced it 40 times out of 40, while the unmodified
+path passed 150 times out of 150 -- which is the shape of a narrow race rather
+than evidence against one. `replwrap.bash()` spawns with `echo=False` and so
+never opens the window; the test now does the same. The `if self.child.echo:`
+branch it used to cover moves to a test of its own against
+`tests/no_editor_repl.py`, which leaves the terminal alone.
 
 ---
 
