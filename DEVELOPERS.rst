@@ -65,6 +65,46 @@ bring them in; on Debian or Ubuntu::
     which the ``man --where sleep`` line in the CI workflow is there to keep
     true.
 
+Running it on Windows
+---------------------
+
+pexpect is a POSIX library -- its central class, ``spawn``, is a pty, and
+Windows has none -- but ``nox`` with no arguments passes there, on a subset.
+
+``lint`` is not a subset of anything: ``[tool.mypy] platform = "linux"`` in
+``pyproject.toml`` pins the platform mypy analyses for, so every machine
+reaches the same verdict instead of a Windows checkout reporting several
+hundred errors about POSIX modules its stubs cannot see.
+
+``test`` runs 92 of the suite's 391 tests, 11 of which skip.
+``tests/conftest.py`` holds the list of modules it drops, with a reason against
+each: everything that drives the pty API, which is most of the suite and all of
+``tests/integration``; ``test_socket`` and ``test_socket_fd``, which need
+``os.fork`` to carry a bound method into a subprocess; and
+``test_popen_spawn``, whose tests reach for ``cat``, ``echo``, ``sleep`` and
+signal delivery even though ``PopenSpawn`` is the class pexpect offers on
+Windows. They are dropped at collection rather than skipped test by test
+because most of them raise while being imported, and a skip mark never runs
+when the module carrying it cannot be imported. What is left exercises
+``fdspawn``, ``SocketSpawn``, the searchers, the screen emulation and the FSM.
+
+A subset cannot meet the 100% floor, so ``collate_coverage`` holds a Windows
+run to ``_WINDOWS_COVERAGE_FLOOR`` in ``noxfile.py`` instead. It is a real
+gate, not a formality -- a regression that drops Windows coverage fails the
+session -- and it has to be re-tuned by hand whenever a module moves across the
+POSIX/Windows line, which is a change the same diff will show.
+
+``.gitattributes`` says ``* text=auto eol=lf``, and it earns its place here:
+the suite compares bytes it reads from ``tests/TESTDATA.txt`` and the ``.vt``
+captures against literals containing ``\n``, and ``src/pexpect/bashrc.sh`` is
+sourced by a shell that takes a trailing CR as part of the command. A clone
+made with ``core.autocrlf=true`` before that file existed still has CRLF on
+disk; in a clean tree, ``git rm -r --cached . && git reset --hard`` refreshes
+it.
+
+None of this is verified by CI, which runs on ``ubuntu-latest`` and nothing
+else. It is verified by running ``nox`` on Windows.
+
 How CI runs it
 ==============
 

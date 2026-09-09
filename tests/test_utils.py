@@ -77,6 +77,7 @@ class SelectIgnoreInterruptsTestCase(unittest.TestCase):
             utils.select_ignore_interrupts([1], [], [], timeout=10)
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="select.poll is POSIX-only")
 class PollIgnoreInterruptsTestCase(unittest.TestCase):
     """Tests for :func:`pexpect.utils.poll_ignore_interrupts`."""
 
@@ -158,6 +159,7 @@ class PollIgnoreInterruptsTestCase(unittest.TestCase):
 class IsExecutableFileTestCase(unittest.TestCase):
     """Tests for :func:`pexpect.utils.is_executable_file` on Solaris."""
 
+    @pytest.mark.skipif(sys.platform == "win32", reason="os.getuid is POSIX-only")
     def test_root_on_solaris_looks_at_the_permission_bits(self) -> None:
         """Judge executability from the mode bits when running as root on Solaris.
 

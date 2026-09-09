@@ -5,9 +5,21 @@ import sys
 import tempfile
 from pathlib import Path
 
+import pytest
+
 import pexpect
 
 from . import pexpect_test_case
+
+# Windows has no execute permission bit: `os.access(path, os.X_OK)`, which
+# `is_executable_file` ends on, answers True for any file that exists, so every
+# "given non-executable" assertion below fails there -- and `chmod(0o400)`,
+# which is how they arrange for one, only clears the read-only flag, which then
+# stops the cleanup from deleting the file.
+_needs_execute_bit = pytest.mark.skipif(
+    sys.platform == "win32",
+    reason="Windows has no execute permission bit for os.access to read",
+)
 
 
 def first_existing(candidates: tuple[str, ...]) -> str | None:
@@ -18,6 +30,7 @@ def first_existing(candidates: tuple[str, ...]) -> str | None:
 class TestCaseWhich(pexpect_test_case.PexpectTestCase):
     """Tests for pexpect.which()."""
 
+    @pytest.mark.skipif(sys.platform == "win32", reason="no ls(1), and no / to start from")
     def test_which_finds_ls(self) -> None:
         """which() can find ls(1)."""
         exercise = pexpect.which("ls")
@@ -40,6 +53,7 @@ class TestCaseWhich(pexpect_test_case.PexpectTestCase):
         finally:
             tempdir.rmdir()
 
+    @_needs_execute_bit
     def test_os_defpath_which(self) -> None:
         """which() finds an executable in os.defpath and returns its abspath."""
         bin_dir = Path(tempfile.mkdtemp())
@@ -86,6 +100,7 @@ class TestCaseWhich(pexpect_test_case.PexpectTestCase):
             if bin_dir.exists():
                 bin_dir.rmdir()
 
+    @_needs_execute_bit
     def test_path_search_which(self) -> None:
         """which() finds an executable in $PATH and returns its abspath."""
         fname = "gcc"
@@ -121,6 +136,7 @@ class TestCaseWhich(pexpect_test_case.PexpectTestCase):
             if bin_dir.exists():
                 bin_dir.rmdir()
 
+    @_needs_execute_bit
     def test_which_follows_symlink(self) -> None:
         """which() follows symlinks and returns its path."""
         fname = "original"

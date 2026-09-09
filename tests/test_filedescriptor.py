@@ -19,6 +19,7 @@ OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 """
 
 import os
+import sys
 import unittest
 
 import pytest
@@ -134,6 +135,10 @@ class ExpectTestCase(pexpect_test_case.PexpectTestCase):
         assert s.read_nonblocking(size=4) == b"This"
         s.close()
 
+    @pytest.mark.skipif(
+        sys.platform == "win32",
+        reason="fdspawn.read_nonblocking only honours its timeout on POSIX",
+    )
     def test_read_nonblocking_times_out(self) -> None:
         """Give up on a file descriptor that never becomes readable.
 
