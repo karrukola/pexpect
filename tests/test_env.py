@@ -72,6 +72,9 @@ class TestCaseEnv(pexpect_test_case.PexpectTestCase):
             child = pexpect.spawn(script, env=environ)
             out = child.readline()
             child.expect(pexpect.EOF)
+        # isalive() is what reaps the child, and until something has,
+        # exitstatus is None. EOF on the pty does not imply either.
+        assert not child.isalive()
         assert child.exitstatus == 0
         assert out.rstrip() == b"pexpect test value"
 

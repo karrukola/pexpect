@@ -6,8 +6,9 @@ later still while annotating the package for `mypy`, then while getting the
 suite to run clean on 3.10 through 3.14, then in a review pass whose only task
 was to look for defects, then while making the suite fail on any warning it
 raises, then while moving CI onto the nox sessions, then while getting `nox`
-to pass on Windows, and last while running the suite on a machine that is not
-CI. Every entry from the first four was left alone at the time it was found,
+to pass on Windows, then while running the suite on a machine that is not CI,
+and last while putting both CI jobs on a Windows runner as well. Every entry
+from the first four was left alone at the time it was found,
 because fixing it would change runtime behaviour and that was out of scope for
 all of them — the lint work was required to be behaviour-preserving, the
 coverage work to add tests rather than change the library, and the typing work
@@ -1859,6 +1860,44 @@ comment above it always said the test was doing. It also tightens the CI path:
 the surviving wait is for `hi\r\n` rather than for `hi`, so the
 `log_read.startswith("hi\r\n")` assertion at the end of the test no longer
 depends on a newline that nothing had waited for.
+
+---
+
+## Found while adding the Windows CI legs (2026-09-09)
+
+### The one that was passing on a coin flip
+
+Not a defect in pexpect either, and unnumbered for the same reason as the entry
+above. `.github/workflows/ci.yml` grew an `os` matrix, so `Lint` and `Test` each
+run on `windows-latest` as well, and the Linux leg of the very first run failed
+in `tests/test_env.py::TestCaseEnv::test_spawn_uses_env` -- on 3.14 only, with
+3.10 through 3.13 green beside it, and with nothing in the branch touching a
+line of code. `assert None == 0`.
+
+```python
+child.expect(pexpect.EOF)
+assert child.exitstatus == 0
+```
+
+`expect(EOF)` means the pty returned EOF. It does not mean anyone has called
+`waitpid` on the child, and until someone has, `spawn.exitstatus` is `None` --
+so the assertion is a race between the test and the kernel, which the test
+usually wins because the child is a two-line shell script that has already
+exited. The two sibling tests that assert the same thing,
+`test_ctrl_chars.py:78` and `test_misc.py:142`, both call `isalive()` first,
+which is the call that does the reaping. This one did not.
+
+Measured on `a7ddbe5`, the commit whose own CI run was green, in isolation on
+3.14: one failure in ten runs. With `assert not child.isalive()` restored ahead
+of it, none in thirty. That ratio is why it survived from `e5eb99c`, which
+added the test in 2016 as `self.assertEqual(child.exitstatus, 0)` -- CI had
+simply not rolled a one yet, and a second matrix leg is what made the dice get
+thrown often enough.
+
+The wider point is the one worth keeping. A test that reads a child's exit
+status without reaping it first will pass on almost every run, and no amount of
+running it on one platform will say so. Two platforms and five interpreters is
+twenty dice per push.
 
 ---
 
