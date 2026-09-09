@@ -27,6 +27,12 @@ costs is however long this machine takes to fork a pty, exec a program into it
 and reap it, once per child. That figure is hardware, not something the suite
 can choose, and it is why the per-test budget is measured here rather than
 written down: see ``pytest_collection_modifyitems``.
+
+What that measurement in turn cannot see is the cost of the code running in
+this process, because the child it times is exec'd and so escapes the coverage
+tracer the tests themselves run under. The tests that spend their time here
+rather than in a child are budgeted by the floor instead; see
+``_BUDGET_FLOOR``.
 """
 
 from __future__ import annotations
@@ -81,11 +87,24 @@ _YIELD_SECONDS = 0.01
 # test pays the extra wait.
 _CHILDREN_PER_TEST = 12
 
-# Never tighter than this, however fast the machine measures. 150 ms is the
-# figure the suite was written to, and on the hardware it was written on the
-# slowest test took 80 ms; a machine quick enough to beat the floor gains
-# nothing from a budget below it.
-_BUDGET_FLOOR = 0.15
+# Never tighter than this, however fast the machine measures. The floor is what
+# budgets the tests the calibration cannot see. It times an exec'd child, which
+# coverage does not trace, while every test it budgets runs in the traced
+# parent, and tracing costs about ten times what an untraced line costs: on the
+# machine this was measured on, the calibration child came out at 16.5 ms bare
+# and 18.1 ms under `coverage run`, a tenth dearer, while test_ansi.py's
+# test_torturet -- which drives no child at all -- went from 14 ms to 230 ms.
+# Against a budget of 12 x 19.5 ms that test lost about one full-suite run in
+# eight, as did test_ctrl_chars.py's test_control_chars at the same 230 ms.
+#
+# Every nox test session runs `coverage run -m pytest`, so that is the regime to
+# budget for, and a second is four times the slowest test measured in it. A
+# machine quick enough for this to bind is one whose children are cheap; on a
+# slow one -- 290 ms a child, so a budget of 3.5 s -- it never binds. What it
+# costs is that a test which hangs waits a second rather than 150 ms to be
+# killed, and 150 ms was never what caught it: a hang waits either forever or
+# on pexpect's own 30 s default.
+_BUDGET_FLOOR = 1.0
 
 # How many times to time a child before believing the answer. The smallest is
 # taken: a budget should follow what the machine can do, not what it happened to
