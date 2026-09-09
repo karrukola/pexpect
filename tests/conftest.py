@@ -35,6 +35,7 @@ import contextlib
 import os
 import pathlib
 import signal
+import subprocess
 import sys
 import time
 from typing import TYPE_CHECKING
@@ -168,10 +169,20 @@ class _YieldingSleep(InstantSleep):
 
 
 def _time_one_child() -> float:
-    """Return the seconds one spawn-and-close of ``_CALIBRATION_COMMAND`` took."""
+    """Return the seconds one spawn-and-close of a child process took."""
     started = time.perf_counter()
-    child = pty_spawn.spawn(_CALIBRATION_COMMAND)
-    child.close()
+    if _ON_POSIX:
+        child = pty_spawn.spawn(_CALIBRATION_COMMAND)
+        child.close()
+    else:
+        # No pty to spawn into, and nothing that survives collection there
+        # drives `cat`. An empty interpreter is the portable stand-in: it is
+        # about the cheapest child this machine can start, which is the figure
+        # the budget is meant to scale with. Starting a process on Windows
+        # costs several times what forking a pty does, so the budget it earns
+        # is loose -- and a budget is a hang detector, which is a job a loose
+        # one still does.
+        subprocess.run([sys.executable, "-c", ""], check=False)
     return time.perf_counter() - started
 
 
@@ -185,10 +196,6 @@ def _measured_budget() -> float:
     ``fast_sleep`` -- because otherwise it would be timing pexpect's settling
     delays, which no test outside that directory ever pays in full.
     """
-    if not _ON_POSIX:
-        # Nothing left to collect there spawns a pty child, so there is nothing
-        # to time; the floor is what the surviving tests are measured against.
-        return _BUDGET_FLOOR
     with pytest.MonkeyPatch.context() as patcher:
         _YieldingSleep().install(patcher)
         try:
