@@ -102,18 +102,30 @@ made with ``core.autocrlf=true`` before that file existed still has CRLF on
 disk; in a clean tree, ``git rm -r --cached . && git reset --hard`` refreshes
 it.
 
-None of this is verified by CI, which runs on ``ubuntu-latest`` and nothing
-else. It is verified by running ``nox`` on Windows.
+CI verifies all of it: both jobs run on ``windows-latest`` as well as on
+``ubuntu-latest``, and the two commands are the same ones. See `How CI runs it`_.
 
 How CI runs it
 ==============
 
 ``.github/workflows/ci.yml`` has two jobs, ``Lint`` and ``Test``, and between them
-they run two commands: ``nox -s lint`` and ``nox -s test``. There is no matrix in
-the workflow. GitHub Actions is told which sessions to run, nox decides which
-interpreters that covers, and the version list stays in one place.
+they run two commands: ``nox -s lint`` and ``nox -s test``. There is no *version*
+matrix in the workflow. GitHub Actions is told which sessions to run, nox decides
+which interpreters that covers, and the version list stays in one place.
 
-Both jobs run on a plain ``ubuntu-latest`` runner. `astral-sh/setup-uv
+There is an operating system matrix, because a runner image is the one thing a
+nox session cannot choose for itself: each job runs on ``ubuntu-latest`` and on
+``windows-latest``, so four jobs in all. ``fail-fast: false``, because a break
+on one platform is a fact about that platform and cancelling the other leg to
+save a few minutes hides whether the break is everywhere or only there. Only
+one step differs between the legs -- the ``apt-get`` below is guarded with
+``if: runner.os == 'Linux'`` -- and the artifact names carry
+``${{ matrix.os }}``, since two steps uploading one name in a single run is an
+error rather than a merge.
+
+A Windows leg lints the whole tree and tests the part of it Windows can reach;
+`Running it on Windows`_ says which part, and why the coverage floor it is held
+to is a different number. `astral-sh/setup-uv
 <https://github.com/astral-sh/setup-uv>`_ puts uv there, and uv installs whichever
 interpreters the runner is missing when a session first asks for one -- five of
 them, on a cold cache. The workflow sets ``NOX_DOWNLOAD_PYTHON: auto``, which is
@@ -135,22 +147,24 @@ moved there, so ``man-db`` is belt and braces; the ``man --where sleep`` check
 closing that step is what makes a runner image that stops shipping man pages say
 so in one line, rather than through a puzzling ``test_pager_as_cat`` failure.
 
-CI is Linux only, as it was before -- the workflow this replaced named no other
-runner -- while the package's classifiers claim macOS as well. Closing that gap
-needs a second job on a ``macos`` runner running the same two commands; nothing
-in the sessions or the matrix would have to change, which is the point of keeping
-the versions in ``.python-versions`` and the workflow free of them.
+macOS is the gap that is left: the package's classifiers claim it and no runner
+covers it. Closing it is one more entry in the ``os`` matrix, and nothing in the
+sessions or the version matrix has to change for it -- which is the point of
+keeping the versions in ``.python-versions`` and the workflow free of them. It
+should need no ``if:`` of its own either, since what the ``apt-get`` step
+installs is either present on that image or reachable through ``brew``, but that
+is a claim a run would have to settle.
 
 What CI publishes
 -----------------
 
-Each job uploads what it produced: ``mypy-reports`` (one JUnit XML per
-interpreter) and ``coverage-reports`` (the combined XML and the HTML tree).
-Neither is a gate. The gates are inside the sessions -- ruff and mypy exit
-non-zero, and ``report.fail_under = 100`` in ``pyproject.toml`` fails
-``collate_coverage`` when the combined total slips -- so a red run says what
-went wrong before anyone downloads an artifact. Both reports are still written
-in that case, which is the point of publishing them.
+Each job uploads what it produced, once per runner:
+``mypy-reports-<os>`` (one JUnit XML per interpreter) and
+``coverage-reports-<os>`` (the combined XML and the HTML tree). Neither is a
+gate. The gates are inside the sessions -- ruff and mypy exit non-zero, and the
+coverage floor fails ``collate_coverage`` when the combined total slips -- so a
+red run says what went wrong before anyone downloads an artifact. Both reports
+are still written in that case, which is the point of publishing them.
 
 Adding a test
 =============

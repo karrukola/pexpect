@@ -1709,9 +1709,10 @@ modules it drops and gives a reason for each; the short version is that the pty
 API is most of this suite and Windows has no pty. The 100% in `pyproject.toml`
 is left as the statement it is, about a run that has the whole suite.
 
-CI still runs on `ubuntu-latest` and nothing else, so none of this is verified
-by a workflow. It is verified by running `nox` on Windows, which is now
-something a developer can do.
+CI ran on `ubuntu-latest` and nothing else while this pass was open, so none of
+it was verified by a workflow at the time -- only by running `nox` on Windows,
+which is what this pass made possible. The `os` matrix that puts both jobs on
+`windows-latest` too came straight after, and verifies it now.
 
 ### 59. mypy analysed for the platform it was running on
 
