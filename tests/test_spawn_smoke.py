@@ -56,3 +56,24 @@ def test_fileno_is_a_descriptor() -> None:
         assert child.fileno() >= 0
     finally:
         child.close(force=True)
+
+
+def test_terminate_stops_a_child_that_ignores_nothing() -> None:
+    """terminate(force=True) works its way up to a child that never dies on its own."""
+    child = pexpect.spawn(sys.executable, ["-c", "input()"], timeout=10)
+    try:
+        assert child.isalive()
+        assert child.terminate(force=True) is True
+        assert child.isalive() is False
+    finally:
+        child.close(force=True)
+
+
+def test_terminate_on_a_dead_child_is_true() -> None:
+    """terminate() on a child that already exited reports success, not an error."""
+    child = pexpect.spawn(sys.executable, ["-c", ""], timeout=10)
+    try:
+        child.expect(pexpect.EOF)
+        assert child.terminate() is True
+    finally:
+        child.close(force=True)

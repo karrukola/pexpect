@@ -41,7 +41,6 @@ import contextlib
 import os
 import pathlib
 import signal
-import subprocess
 import sys
 import time
 from typing import TYPE_CHECKING
@@ -54,15 +53,26 @@ import pexpect
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterator
 
-# pexpect's pty API is POSIX-only: `pty_spawn` imports `pty`, which imports
-# `termios`, and `pexpect.spawn` is exported from `__init__` behind the same
-# platform check. Most of this suite drives it, and on Windows those modules are
-# dropped at collection rather than skipped at runtime, because what fails there
-# is their imports -- see _POSIX_ONLY. What is left is the part of pexpect that
-# Windows does support, and none of it asks for the two things guarded here.
+# pexpect's pty API is no longer POSIX-only: `pty_spawn` picks a backend --
+# `ptyprocess` on POSIX, `pexpect._winpty` over ConPTY on Windows -- and
+# `pexpect.spawn` is exported from `__init__` on every platform. What is still
+# platform-specific is which *programs* the suite can drive: most of this
+# suite reaches for POSIX ones like `cat`, `echo` and a shell, which is why
+# most of the modules named below are dropped at collection on Windows rather
+# than skipped at runtime -- see _POSIX_ONLY.
+from pexpect import pty_spawn
+
 _ON_POSIX = sys.platform != "win32"
-if _ON_POSIX:
-    from pexpect import pty_spawn
+
+# SIGKILL is POSIX; on Windows os.kill() with SIGTERM is TerminateProcess,
+# which is the same "cannot be caught" contract. Written as a platform `if`
+# rather than a conditional expression because that is the form mypy
+# narrows: under --platform win32, signal.SIGKILL does not exist and a
+# ternary would not be excused.
+if sys.platform == "win32":
+    _HARD_KILL = signal.SIGTERM
+else:
+    _HARD_KILL = signal.SIGKILL
 
 # tests/integration budgets itself; see pytest_collection_modifyitems below.
 _SLOW_DIR = pathlib.Path(__file__).parent / "integration"
@@ -193,18 +203,8 @@ class _YieldingSleep(InstantSleep):
 def _time_one_child() -> float:
     """Return the seconds one spawn-and-close of a child process took."""
     started = time.perf_counter()
-    if _ON_POSIX:
-        child = pty_spawn.spawn(_CALIBRATION_COMMAND)
-        child.close()
-    else:
-        # No pty to spawn into, and nothing that survives collection there
-        # drives `cat`. An empty interpreter is the portable stand-in: it is
-        # about the cheapest child this machine can start, which is the figure
-        # the budget is meant to scale with. Starting a process on Windows
-        # costs several times what forking a pty does, so the budget it earns
-        # is loose -- and a budget is a hang detector, which is a job a loose
-        # one still does.
-        subprocess.run([sys.executable, "-c", ""], check=False)
+    child = pty_spawn.spawn(_CALIBRATION_COMMAND)
+    child.close()
     return time.perf_counter() - started
 
 
@@ -308,4 +308,4 @@ def killed_pty_children(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
         if ptyproc is None or ptyproc.terminated:
             continue
         with contextlib.suppress(OSError):
-            os.kill(ptyproc.pid, signal.SIGKILL)
+            os.kill(ptyproc.pid, _HARD_KILL)

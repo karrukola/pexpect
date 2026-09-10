@@ -790,7 +790,10 @@ class spawn(SpawnBase[AnyStr]):
 
         See also, sendintr() and sendeof().
         """
-        n, byte = self.ptyproc.sendcontrol(char)
+        # write_bytes() under the Windows backend raises PtyProcessError for a
+        # closed pty, same as send(); wrapped for the same reason.
+        with _wrap_ptyprocess_err():
+            n, byte = self.ptyproc.sendcontrol(char)
         self._log_control(byte)
         return n
 
@@ -805,7 +808,9 @@ class spawn(SpawnBase[AnyStr]):
         method does not send a newline. It is the responsibility of the caller
         to ensure the eof is sent at the beginning of a line.
         """
-        _n, byte = self.ptyproc.sendeof()
+        # Same PtyProcessError-for-a-closed-pty case as sendcontrol().
+        with _wrap_ptyprocess_err():
+            _n, byte = self.ptyproc.sendeof()
         self._log_control(byte)
 
     def sendintr(self) -> None:
@@ -813,7 +818,9 @@ class spawn(SpawnBase[AnyStr]):
 
         It does not require the SIGINT to be the first character on a line.
         """
-        _n, byte = self.ptyproc.sendintr()
+        # Same PtyProcessError-for-a-closed-pty case as sendcontrol().
+        with _wrap_ptyprocess_err():
+            _n, byte = self.ptyproc.sendintr()
         self._log_control(byte)
 
     @property
@@ -835,9 +842,18 @@ class spawn(SpawnBase[AnyStr]):
         It starts nicely with SIGHUP and SIGINT. If "force" is True then moves
         onto SIGKILL. This returns True if the child was terminated. This
         returns False if the child could not be terminated.
+
+        On Windows there is no ladder: Ctrl-C is sent, and TerminateProcess
+        follows only if *force* is True.
         """
         if not self.isalive():
             return True
+        if sys.platform == "win32":
+            # Ctrl-C, then TerminateProcess only with force. The POSIX ladder's
+            # SIGHUP and SIGCONT have no counterpart, and os.kill() there
+            # treats any signal but SIGTERM as an exit code rather than a
+            # signal, so walking the ladder would kill on the first rung.
+            return bool(self.ptyproc.terminate(force=force))
         try:
             for sig in (signal.SIGHUP, signal.SIGCONT, signal.SIGINT):
                 self.kill(sig)
