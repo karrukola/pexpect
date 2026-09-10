@@ -23,8 +23,8 @@ rather than merely import.
   raw-mode console input; it raises instead. See "Unsupported calls".
 * Running the whole test suite on Windows. `tests/integration`,
   `test_socket.py`, `test_socket_fd.py`, `test_pxssh.py`,
-  `test_replwrap.py` and `test_popen_spawn.py` stay dropped; each needs a
-  POSIX program, `os.fork`, or both.
+  `test_replwrap.py` and `test_popen_spawn.py` are skipped there; each
+  needs a POSIX program, `os.fork`, or both.
 * Changing any POSIX behaviour. Every change below is either a
   platform-neutral refactor or a `win32` branch.
 
@@ -240,15 +240,58 @@ on Windows. Rewriting the literal `"cat"` and `"echo hello"` command
 strings in the modules below is the largest single piece of work in this
 change.
 
-Un-dropped from `_POSIX_ONLY` in `tests/conftest.py`: `test_expect.py`,
-`test_misc.py`, `test_isalive.py`, `test_constructor.py`, `test_env.py`,
-`test_winsize.py`, `test_unicode.py`, `test_ctrl_chars.py`,
-`test_repr.py`, `test_run.py`, `test_delay.py`, `test_dotall.py`,
-`test_timeout_pattern.py`, `test_async.py`.
+`_POSIX_ONLY` and `collect_ignore` in `tests/conftest.py` go away
+entirely. A module that cannot run on Windows says so itself:
 
-Still dropped, with the reasons already in that file: `integration`,
-`test_socket.py`, `test_socket_fd.py`, `test_pxssh.py`,
-`test_replwrap.py`, `test_popen_spawn.py`.
+```python
+pytestmark = pytest.mark.skipif(
+    sys.platform == "win32",
+    reason="drives POSIX programs: cat, echo, sleep",
+)
+```
+
+Dropping a module at collection was never the preference -- the comment
+in `tests/conftest.py` gives the reason it was necessary: "a skip mark
+never runs when the module that carries it cannot be imported", and
+`pexpect.spawn` was unimportable on Windows. This change removes that
+constraint, so the mechanism becomes a skip with a stated reason,
+counted and printed by pytest, instead of a name in a list that a reader
+has to cross-reference.
+
+The precondition is that every module under `tests/` imports cleanly on
+Windows, which a `pytest --collect-only` run on CI confirms before the
+marks are trusted. It holds by inspection today: of the six POSIX-only
+modules, none imports a POSIX-only stdlib module -- between them they
+import `os`, `signal`, `socket`, `multiprocessing` and `platform`, all of
+which exist on Windows -- and every `pexpect` module they import becomes
+importable there under this design.
+
+Fourteen modules lose their POSIX-only status altogether and run on both
+platforms, using `tests/commands.py` for the programs they drive:
+`test_expect.py`, `test_misc.py`, `test_isalive.py`,
+`test_constructor.py`, `test_env.py`, `test_winsize.py`,
+`test_unicode.py`, `test_ctrl_chars.py`, `test_repr.py`, `test_run.py`,
+`test_delay.py`, `test_dotall.py`, `test_timeout_pattern.py`,
+`test_async.py`.
+
+Six keep a module-level `skipif`, each carrying the reason already
+written in `tests/conftest.py`: `test_socket.py` and `test_socket_fd.py`
+(`os.fork`), `test_pxssh.py`, `test_replwrap.py` and
+`test_popen_spawn.py` (POSIX programs). `test_socket_fd.py` imports
+`test_socket`, so it needs its own mark rather than inheriting one.
+
+`tests/integration/` is a directory, and `pytestmark` is a module-level
+name, so a per-module mark in each of its ten files would be repetition.
+Its own `tests/integration/conftest.py` adds the mark to every item it
+collects instead:
+
+```python
+def pytest_collection_modifyitems(items):
+    if sys.platform == "win32":
+        skip = pytest.mark.skip(reason="integration tests drive POSIX programs")
+        for item in items:
+            item.add_marker(skip)
+```
 
 New `tests/test_unsupported.py` asserts that each call in "`spawn`'s
 Windows branches" raises `ExceptionPexpect` on Windows and succeeds on
