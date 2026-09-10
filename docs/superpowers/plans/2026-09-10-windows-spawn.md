@@ -83,9 +83,14 @@ from pexpect import _ptyproc
 
 # The methods and attributes pty_spawn.spawn reaches for. A backend missing
 # any of them fails at the call site, in whichever test happens to run first.
+#
+# Checked against a live child rather than against the class: ptyprocess sets
+# status, exitstatus, signalstatus, flag_eof, terminated, fd and pid in
+# __init__, so hasattr() on the class is False for every one of them.
 _REQUIRED = (
     "close",
     "exitstatus",
+    "fd",
     "flag_eof",
     "getwinsize",
     "isalive",
@@ -106,9 +111,13 @@ _REQUIRED = (
 )
 
 
-@pytest.mark.parametrize("name", _REQUIRED)
-def test_backend_offers_what_pty_spawn_calls(name: str) -> None:
-    assert hasattr(_ptyproc.PtyProcess, name)
+def test_backend_offers_what_pty_spawn_calls() -> None:
+    child = _ptyproc.PtyProcess.spawn([sys.executable, "-c", "input()"])
+    try:
+        missing = [name for name in _REQUIRED if not hasattr(child, name)]
+        assert not missing, f"the {sys.platform} backend is missing {missing}"
+    finally:
+        child.close(force=True)
 
 
 def test_backend_error_is_an_exception_class() -> None:
@@ -281,7 +290,7 @@ from ._ptyproc import PtyProcess, PtyProcessError, use_native_pty_fork
 - [ ] **Step 6: Run the tests and make sure they pass**
 
 Run: `uv run --frozen pytest tests/test_ptyproc_backend.py -v`
-Expected: PASS, 22 tests.
+Expected: PASS, 4 tests.
 
 Run: `uv run --frozen pytest tests -x -q`
 Expected: PASS, the whole suite, no new failures.
@@ -905,7 +914,6 @@ the other platform, and these tests are what stands in for that gate.
 
 from __future__ import annotations
 
-import signal
 import sys
 from typing import TYPE_CHECKING
 
@@ -979,7 +987,7 @@ def test_posix_supports_the_same_calls(child: pexpect.spawn[bytes]) -> None:
     assert child.getecho() is True
     child.setecho(state=False)
     assert child.waitnoecho(timeout=5) is True
-    child.kill(signal.SIGHUP)
+    child.kill(_SIGHUP)
 ```
 
 - [ ] **Step 2: Run it to make sure it fails**
@@ -1289,11 +1297,21 @@ where `tests/conftest.py` is being edited anyway.
    Windows. Replace the kill with:
 
 ```python
+        # SIGKILL is POSIX; on Windows os.kill() with SIGTERM is
+        # TerminateProcess, which is the same "cannot be caught" contract.
+        # Written as a platform `if` rather than a conditional expression
+        # because that is the form mypy narrows: under --platform win32,
+        # signal.SIGKILL does not exist and a ternary would not be excused.
+        if sys.platform == "win32":
+            hard_kill = signal.SIGTERM
+        else:
+            hard_kill = signal.SIGKILL
         with contextlib.suppress(OSError):
-            # SIGKILL is POSIX; on Windows os.kill() with SIGTERM is
-            # TerminateProcess, which is the same "cannot be caught" contract.
-            os.kill(ptyproc.pid, signal.SIGKILL if _ON_POSIX else signal.SIGTERM)
+            os.kill(ptyproc.pid, hard_kill)
 ```
+
+Hoist the two-line platform choice to module level beside `_ON_POSIX` if ruff
+objects to it inside the loop.
 
 - [ ] **Step 5: Run the tests and make sure they pass**
 
@@ -1607,7 +1625,7 @@ platform pass.
 
 - [ ] **Step 1: Write the failing check**
 
-Run: `uv run --frozen mypy --platform win32 src tests`
+Run: `uv run --frozen mypy --platform win32 src`
 Expected: FAIL. `[tool.mypy] platform = "linux"` is overridden by the flag, and
 this is the first time the Windows branches are analysed; expect errors in
 `_winpty.py`, `_ptyproc.py` and the `sys.platform == "win32"` blocks. That
@@ -1632,19 +1650,27 @@ it that explains why pexpect is POSIX-only, and replace both with:
 In `noxfile.py`, replace the single mypy call with:
 
 ```python
-    # Both platforms, because both carry live code: the process backend behind
-    # pexpect._ptyproc is ptyprocess on POSIX and pywinpty on Windows, and
-    # whichever platform mypy assumes, the other one's branch drops out of the
-    # analysis. One report per interpreter per platform -- the sessions would
-    # otherwise take turns overwriting one reports/mypy.xml, which CI publishes.
-    for platform in ("linux", "win32"):
+    # Both platforms, because the library carries live code for both: the
+    # process backend behind pexpect._ptyproc is ptyprocess on POSIX and
+    # pywinpty on Windows, and whichever platform mypy assumes, the other one's
+    # branch drops out of the analysis.
+    #
+    # The win32 pass covers src/ only. The suite's POSIX-only modules reach for
+    # os.fork, signal.SIGHUP and signal.SIGKILL at the top level of a function,
+    # guarded by a pytest skipif that mypy cannot read, so a win32 pass over
+    # tests/ would report a few dozen attr-defined errors about tests that
+    # never run there. What the second pass is for is the library's Windows
+    # code, and src/ is where all of it lives.
+    #
+    # One report per interpreter per platform -- the sessions would otherwise
+    # take turns overwriting one reports/mypy.xml, which CI publishes.
+    for platform, targets in (("linux", (_SRC_ROOT, _TESTS_ROOT)), ("win32", (_SRC_ROOT,))):
         session.run(
             "mypy",
             f"--platform={platform}",
             "--junit-xml",
             f"reports/mypy-{session.python}-{platform}.xml",
-            _SRC_ROOT,
-            _TESTS_ROOT,
+            *targets,
         )
 ```
 
