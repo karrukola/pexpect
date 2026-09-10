@@ -12,14 +12,25 @@ end and decodes with the caller's own encoding and codec_errors; and it re-reads
 one byte at a time until its buffer decodes as UTF-8, which is right for
 truncated UTF-8 and never terminates on invalid UTF-8 -- a child emitting cp1252
 or raw binary blocks it inside a loop no pexpect timeout reaches. Reading the
-socket it already exposes gives the child's real bytes instead.
+socket it already exposes avoids that hang, but does not recover byte
+exactness: the reader thread decodes the native read as UTF-8 and re-encodes
+it before writing to the socket, so non-UTF-8 child output is already mangled
+by the time it gets there. What read_bytes() returns is the bytes pywinpty's
+reader produced, not the child's own bytes -- the guarantee pexpect's bytes
+mode gives on POSIX, that read() returns exactly what the child wrote, does
+not hold here.
 
-Two properties of the dependency are inherited rather than fixed, recorded here
-so they are not rediscovered as pexpect bugs: each spawn opens a listening
-socket on 127.0.0.1, which a local process could race the connect on; and its
-reader sends the in-band sentinel b'0011Ignore' for an empty read and strips it
-again, so a child printing that exact string loses it. PYWINPTY_BLOCK defaults
-to 1, which makes an empty read, and so the sentinel, rare.
+That reader thread also writes the literal sentinel b'0011Ignore' into the
+socket for every empty native read, and strips it back out only inside the
+read() method above, which this module does not call. read_bytes() strips it
+instead, from the raw chunk rather than by equality -- the kernel can coalesce
+a sentinel-only send with the next real one -- which means a child that
+prints that exact string still loses it; that defect is inherited from
+pywinpty, not introduced here.
+
+One more property of the dependency is inherited rather than fixed, recorded
+here so it is not rediscovered as a pexpect bug: each spawn opens a listening
+socket on 127.0.0.1, which a local process could race the connect on.
 """
 
 from __future__ import annotations
@@ -33,6 +44,11 @@ import winpty
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
+
+# The reader thread in winpty/ptyprocess.py writes this into the socket for
+# every empty native read, and only winpty.PtyProcess.read() strips it back
+# out -- see the module docstring for why read_bytes() does not call that.
+_EMPTY_READ_SENTINEL = b"0011Ignore"
 
 
 class PtyProcessError(Exception):
@@ -96,20 +112,60 @@ class PtyProcess:
     def read_bytes(self, size: int) -> bytes:
         """Read at most *size* bytes of the child's output.
 
-        Reads the socket pywinpty's reader thread feeds, so the bytes are the
-        child's own. An empty read is end of file, which is what
+        Reads the socket pywinpty's reader thread feeds. A genuinely empty
+        read -- the socket has closed -- is end of file, which is what
         SpawnBase.read_nonblocking's BSD-style arm turns into pexpect's EOF.
+        A read that is empty only once _EMPTY_READ_SENTINEL is stripped out
+        is not: it is retried instead, so the sentinel never reaches
+        SpawnBase's decoder or a caller's expect() pattern.
+
+        The retry does not spin under the configuration this module assumes:
+        PYWINPTY_BLOCK defaults to 1, which makes the native read block, so
+        an empty native read -- and so a sentinel-only chunk -- is rare.
+        Setting PYWINPTY_BLOCK=0 makes the reader thread poll and emit the
+        sentinel roughly once a millisecond, which would spin this loop for
+        as long as the child keeps running with nothing to say; this module
+        neither sets nor recommends that.
         """
-        data: bytes = self._proc.fileobj.recv(size)
-        if not data:
-            self.flag_eof = True
-        return data
+        while True:
+            data: bytes = self._proc.fileobj.recv(size)
+            if not data:
+                self.flag_eof = True
+                return b""
+            # A chunk that is only the sentinel, and one where the kernel has
+            # coalesced it with the next real chunk, both come through here --
+            # a plain equality check would miss the second case.
+            data = data.replace(_EMPTY_READ_SENTINEL, b"")
+            if data:
+                return data
 
     def write_bytes(self, data: bytes) -> int:
-        """Write *data* to the child and return the number of bytes taken."""
-        # winpty.PTY.write takes str and encodes UTF-8 itself; surrogateescape
-        # is what carries bytes that are not valid UTF-8 through unchanged.
-        return int(self._proc.write(data.decode("utf-8", "surrogateescape")))
+        """Write *data* to the child and return the number of bytes taken.
+
+        winpty.PTY.write() takes a Rust str, by way of PyUnicode_AsUTF8AndSize
+        with surrogatepass, so a lone surrogate -- what surrogateescape would
+        produce for a non-UTF-8 byte -- is not carried through unchanged: it
+        is either rejected outright or re-encoded into three-byte WTF-8. A
+        non-UTF-8 payload is refused up front instead, rather than risking a
+        bare UnicodeEncodeError or silent corruption. On success the byte
+        count pexpect's send() contract wants is len(data) itself -- valid
+        UTF-8 decodes to exactly that many bytes -- which is simpler than
+        trusting pywinpty's own return value.
+        """
+        try:
+            text = data.decode("utf-8")
+        except UnicodeDecodeError as e:
+            msg = f"write_bytes() cannot send non-UTF-8 bytes on Windows: {e}"
+            raise PtyProcessError(msg) from e
+        try:
+            self._proc.write(text)
+        except (winpty.WinptyError, EOFError, OSError) as e:
+            # winpty.PtyProcess.write() raises a bare EOFError if the child
+            # has already exited, which PtyProcessError is what lets
+            # terminate() and pty_spawn's _wrap_ptyprocess_err tell apart
+            # from a real bug.
+            raise PtyProcessError(*e.args) from e
+        return len(data)
 
     def isatty(self) -> bool:
         """Return True: a ConPTY child is always attached to a console."""
@@ -217,7 +273,13 @@ class PtyProcess:
         """
         if not self.isalive():
             return True
-        self.sendintr()
+        try:
+            self.sendintr()
+        except PtyProcessError:
+            # write_bytes() raises this if the child exited between the
+            # isalive() check above and the write landing -- gone is the
+            # answer terminate() is asked for, not a failure to report.
+            return not self.isalive()
         time.sleep(self.delayafterterminate)
         if not self.isalive():
             return True
@@ -249,6 +311,18 @@ class PtyProcess:
         if self.closed:
             return
         try:
+            # winpty.PtyProcess.isalive() -- which isalive() above, and
+            # pty_spawn's read loop, call constantly -- sets
+            # self._proc.closed = not alive as a side effect
+            # (winpty/ptyprocess.py:272). By the time a child has exited,
+            # the normal case, _proc.closed is already True, and
+            # _proc.close() is gated on `if not self.closed:`
+            # (winpty/ptyprocess.py:144) -- so without this reset it would
+            # return immediately without closing fileobj or _server, leaking
+            # two sockets and the reader thread until GC finalizes them and
+            # raises ResourceWarning, which filterwarnings = ["error"] would
+            # turn into a failure somewhere unrelated.
+            self._proc.closed = False
             self._proc.close(force=force)
         except (winpty.WinptyError, OSError) as e:
             raise PtyProcessError(*e.args) from e
