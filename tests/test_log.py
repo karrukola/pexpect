@@ -25,7 +25,7 @@ import pytest
 
 import pexpect
 
-from . import pexpect_test_case
+from . import commands, pexpect_test_case
 
 pytestmark = pytest.mark.usefixtures("fast_sleep", "killed_pty_children")
 # the program cat(1) may display ^D\x08\x08 when \x04 (EOF, Ctrl-D) is sent
@@ -39,7 +39,16 @@ class TestCaseLog(pexpect_test_case.PexpectTestCase):
         """Everything read from the child lands in the logfile."""
         log_message = "This is a test."
         with tempfile.NamedTemporaryFile() as mylog:
-            p = pexpect.spawn("echo", [log_message])
+            # commands.echo() only hands back a full command string (see
+            # tests/test_misc.py's test_readline_bin_echo for the same
+            # substitution), so the two-argument constructor form this test
+            # used to exercise collapses into the command-string form. The
+            # message is quoted, as tests/test_dotall.py's echo call already
+            # is, so the splitter keeps it as one argument regardless of the
+            # spaces inside it -- passing it unquoted would still assert true
+            # here by accident (single spaces split and rejoin the same way),
+            # but would not survive log_message gaining a double space.
+            p = pexpect.spawn(commands.echo(f'"{log_message}"'))
             p.logfile = mylog
             p.expect(pexpect.EOF)
             p.logfile = None
@@ -51,7 +60,7 @@ class TestCaseLog(pexpect_test_case.PexpectTestCase):
         """logfile_read records what the child echoes back, not what we sent."""
         log_message = "This is a test."
         with tempfile.NamedTemporaryFile() as mylog:
-            p = pexpect.spawn("cat")
+            p = pexpect.spawn(commands.CAT)
             p.logfile_read = mylog
             p.sendline(log_message)
             p.sendeof()
@@ -66,7 +75,7 @@ class TestCaseLog(pexpect_test_case.PexpectTestCase):
         """logfile_send records what we sent to the child, not what came back."""
         log_message = b"This is a test."
         with tempfile.NamedTemporaryFile() as mylog:
-            p = pexpect.spawn("cat")
+            p = pexpect.spawn(commands.CAT)
             p.logfile_send = mylog
             p.sendline(log_message)
             p.sendeof()
@@ -86,7 +95,7 @@ class TestCaseLog(pexpect_test_case.PexpectTestCase):
         """
         log_message = "This is a test."
         with tempfile.NamedTemporaryFile() as mylog:
-            p = pexpect.spawn("cat")
+            p = pexpect.spawn(commands.CAT)
             p.logfile = mylog
             p.sendline(log_message)
             p.sendeof()

@@ -527,6 +527,7 @@ class TestCaseMisc(pexpect_test_case.PexpectTestCase):
         with pytest.raises(TypeError):
             matcher({})
 
+    @pytest.mark.skipif(sys.platform == "win32", reason="needs the POSIX program `pwd`")
     def test_cwd(self) -> None:
         """Check keyword argument `cwd=' of pexpect.run()."""
         tmp_dir = os.path.realpath(tempfile.gettempdir())

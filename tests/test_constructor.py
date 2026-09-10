@@ -25,7 +25,7 @@ import pytest
 
 import pexpect
 
-from . import pexpect_test_case
+from . import commands, pexpect_test_case
 
 pytestmark = pytest.mark.usefixtures("fast_sleep", "killed_pty_children")
 
@@ -56,16 +56,20 @@ class TestCaseConstructor(pexpect_test_case.PexpectTestCase):
         with pytest.raises(pexpect.ExceptionPexpect):
             pexpect.spawn("   ")
 
-    # The plan's brief lists " ls" among the literals that need no skip, on the
-    # theory that they are only about split_command_line's parsing. That is true
-    # of the empty-command test above, but not of this one: p1 is a real spawn
-    # of `ls` that runs to completion below, so it needs `ls` to exist just as
-    # much as test_named_parameters does.
-    @pytest.mark.skipif(sys.platform == "win32", reason="needs the POSIX program `ls`")
     def test_leading_whitespace_resolves_same_command(self) -> None:
-        """A leading space in the command string is not mistaken for an argument."""
-        p1 = pexpect.spawn(" ls")
-        p2 = pexpect.spawn("ls")
+        """A leading space in the command string is not mistaken for an argument.
+
+        The plan's brief listed the original `" ls"` literal here as needing
+        no substitution, on the theory that this test is only about
+        split_command_line's parsing. That is not quite right -- p1 below
+        really does spawn and run its command to completion, so it needs a
+        program that actually exists on both platforms. `commands.TRUE`
+        supplies that: it is what this test is about (whether leading
+        whitespace changes command resolution), not what `ls` was there to
+        provide.
+        """
+        p1 = pexpect.spawn(" " + commands.TRUE)
+        p2 = pexpect.spawn(commands.TRUE)
         assert p1.command == p2.command
         p1.expect(pexpect.EOF)
         p2.expect(pexpect.EOF)
