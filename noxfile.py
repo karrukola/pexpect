@@ -80,14 +80,20 @@ def collate_coverage(session: nox.Session) -> None:
     """Combine test coverage results from all test executions."""
     _install_deps(session)
     session.run("coverage", "combine")
-    # On Windows the run measured a subset of the library, so it is held to a
-    # subset's floor; see _WINDOWS_COVERAGE_FLOOR. Passed on the command line
-    # because that is what outranks report.fail_under in the config.
-    floor = () if sys.platform != "win32" else (f"--fail-under={_WINDOWS_COVERAGE_FLOOR}",)
+    if sys.platform == "win32":
+        # A subset of the library ran, so a subset's floor; see
+        # _WINDOWS_COVERAGE_FLOOR.
+        report_args: tuple[str, ...] = (f"--fail-under={_WINDOWS_COVERAGE_FLOOR}",)
+    else:
+        # src/pexpect/_winpty.py is the Windows process backend. It imports
+        # `winpty`, which exists only on Windows and cannot be installed here,
+        # so a POSIX run cannot execute a line of it and 100% is a statement
+        # about the rest. The Windows run measures it without this.
+        report_args = ("--omit=*/pexpect/_winpty.py",)
     # report.fail_under makes both of these exit 2 once the total has slipped, and
     # each writes its report before it checks. Tolerating that one exit code on the
     # HTML run -- 2 is the floor, 1 is a real error -- leaves the failing to the XML
     # run below, so a run that breaks the floor still publishes the report that
     # shows where it broke. CI uploads both.
-    session.run("coverage", "html", *floor, success_codes=(0, 2))
-    session.run("coverage", "xml", *floor)
+    session.run("coverage", "html", *report_args, success_codes=(0, 2))
+    session.run("coverage", "xml", *report_args)

@@ -4,7 +4,14 @@ dynamic = ["version"]
 readme = "README.rst"
 requires-python = ">=3.10"
 dependencies = [
-    "ptyprocess>=0.7.0",
+    # ptyprocess imports termios while being imported, so the marker is not
+    # an optimisation -- an unmarked install would fail on Windows.
+    "ptyprocess>=0.7.0; sys_platform != 'win32'",
+    # ConPTY, plus the OpenConsole.exe and conpty.dll it bundles, which is why
+    # Windows 10 and 11 are both covered rather than only builds new enough to
+    # ship a system ConPTY. Wheels are published for cp310 through cp314, the
+    # whole of .python-versions.
+    "pywinpty>=3.0.5; sys_platform == 'win32'",
 ]
 authors = [
   {name = "Noah Spurrier", email="noah@noah.org"},
@@ -20,6 +27,7 @@ classifiers = [
     'Intended Audience :: System Administrators',
     'Operating System :: POSIX',
     'Operating System :: MacOS :: MacOS X',
+    'Operating System :: Microsoft :: Windows',
     'Programming Language :: Python',
     'Programming Language :: Python :: 3',
     'Programming Language :: Python :: 3.10',
@@ -107,6 +115,13 @@ report.exclude_also = [
     "if 0:",
     "if self.debug:",
     "if settings.DEBUG",
+    # One of the two is dead on any given run, and neither can be executed on
+    # the other platform, so a covered platform branch is not a thing either
+    # floor can ask for. What holds them honest instead is that every branch
+    # guarded this way has a test in tests/test_unsupported.py asserting the
+    # behaviour on the platform that reaches it.
+    "if sys\\.platform == .win32.:",
+    "if sys\\.platform != .win32.:",
     "if TYPE_CHECKING:",
     "raise AssertionError",
     "raise NotImplementedError",
@@ -163,6 +178,13 @@ lint.per-file-ignores."src/pexpect/FSM.py" = [
     "N802",   # `BeginBuildNumber` and friends are public FSM action callbacks
     "N818",   # `ExceptionFSM` is public API
     "N999",   # imported as `pexpect.FSM`
+]
+# The backend mirrors ptyprocess.PtyProcess, which pty_spawn calls positionally
+# -- close(force), setecho(state), terminate(force), spawn(..., echo=...).
+# Making those keyword-only here would break the call sites that already exist.
+lint.per-file-ignores."src/pexpect/_winpty.py" = [
+    "FBT001", "FBT002",  # boolean flags, positional because ptyprocess's are
+    "PLR0913", "PLR0917",  # spawn() takes ptyprocess's argument list
 ]
 lint.per-file-ignores."src/pexpect/exceptions.py" = [
     "N818",   # `ExceptionPexpect` is public API
@@ -251,3 +273,12 @@ platform = "linux"
 [[tool.mypy.overrides]]
 module = [ "ptyprocess", "ptyprocess.*" ]
 follow_untyped_imports = true
+
+# pywinpty ships _winpty.pyi but no py.typed marker. follow_untyped_imports
+# resolves its members where the package is installed -- the Windows runners --
+# and ignore_missing_imports keeps a Linux checkout, where it is not installed
+# and cannot be, from failing the --platform win32 pass with import-not-found.
+[[tool.mypy.overrides]]
+module = [ "winpty", "winpty.*" ]
+follow_untyped_imports = true
+ignore_missing_imports = true

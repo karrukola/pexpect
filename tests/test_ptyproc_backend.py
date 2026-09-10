@@ -9,6 +9,8 @@ from __future__ import annotations
 
 import sys
 
+import pytest
+
 from pexpect import _ptyproc
 
 # The methods and attributes pty_spawn.spawn reaches for. A backend missing
@@ -73,5 +75,19 @@ def test_round_trip_through_the_byte_seam() -> None:
         seen = b""
         while b"ping" not in seen.replace(b"\r", b""):
             seen += child.read_bytes(1024)
+    finally:
+        child.close(force=True)
+
+
+def test_windows_backend_refuses_the_termios_calls() -> None:
+    """Getecho and setecho have no ConPTY equivalent and must say so."""
+    if sys.platform != "win32":
+        pytest.skip("the POSIX backend supports both calls")
+    child = _ptyproc.PtyProcess.spawn([sys.executable, "-c", "input()"])
+    try:
+        with pytest.raises(_ptyproc.PtyProcessError, match="getecho"):
+            child.getecho()
+        with pytest.raises(_ptyproc.PtyProcessError, match="setecho"):
+            child.setecho(state=False)
     finally:
         child.close(force=True)
