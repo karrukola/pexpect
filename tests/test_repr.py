@@ -6,7 +6,7 @@ import pytest
 
 import pexpect
 
-from . import pexpect_test_case
+from . import commands, pexpect_test_case
 
 pytestmark = pytest.mark.usefixtures("fast_sleep", "killed_pty_children")
 
@@ -17,7 +17,7 @@ class TestCaseMisc(pexpect_test_case.PexpectTestCase):
     def test_str_spawnu(self) -> None:
         """Exercise spawnu.__str__()."""
         # given,
-        p = pexpect.spawnu("cat")
+        p = pexpect.spawnu(commands.CAT)
         # exercise,
         value = str(p)
         # verify
@@ -26,7 +26,7 @@ class TestCaseMisc(pexpect_test_case.PexpectTestCase):
     def test_str_spawn(self) -> None:
         """Exercise spawn.__str__()."""
         # given,
-        p = pexpect.spawn("cat")
+        p = pexpect.spawn(commands.CAT)
         # exercise,
         value = str(p)
         # verify

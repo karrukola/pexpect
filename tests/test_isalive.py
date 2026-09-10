@@ -27,7 +27,7 @@ import pytest
 
 import pexpect
 
-from . import pexpect_test_case
+from . import commands, pexpect_test_case
 
 pytestmark = pytest.mark.usefixtures("fast_sleep", "killed_pty_children")
 KILL_SIGNAL = 9  # SIGKILL, spelled as a number because that is what kill(1) takes
@@ -38,7 +38,7 @@ class IsAliveTestCase(pexpect_test_case.PexpectTestCase):
 
     def test_expect_wait(self) -> None:
         """Ensure consistency in wait() and isalive()."""
-        p = pexpect.spawn("sleep 0.05")
+        p = pexpect.spawn(commands.sleep(0.05))
         assert p.isalive()
         assert p.wait() == 0
         assert not p.isalive()
@@ -48,7 +48,7 @@ class IsAliveTestCase(pexpect_test_case.PexpectTestCase):
 
     def test_expect_wait_after_termination(self) -> None:
         """Ensure wait on a process terminated by kill -9."""
-        p = pexpect.spawn("sleep 3")
+        p = pexpect.spawn(commands.sleep(3))
         assert p.isalive()
         p.kill(KILL_SIGNAL)
         time.sleep(1)
@@ -70,6 +70,7 @@ class IsAliveTestCase(pexpect_test_case.PexpectTestCase):
         assert p.signalstatus == signal.SIGALRM
         return None
 
+    @pytest.mark.skipif(sys.platform == "win32", reason="needs the POSIX program `ls`")
     def test_expect_isalive_dead_after_normal_termination(self) -> None:
         """Report a child that ran to completion as no longer alive."""
         p = pexpect.spawn("ls", timeout=15)
@@ -78,7 +79,7 @@ class IsAliveTestCase(pexpect_test_case.PexpectTestCase):
 
     def test_expect_isalive_dead_after_sighup(self) -> None:
         """Report a child that honours the SIGHUP from terminate() as no longer alive."""
-        p = pexpect.spawn("cat", timeout=5, ignore_sighup=False)
+        p = pexpect.spawn(commands.CAT, timeout=5, ignore_sighup=False)
         assert p.isalive()
         force = False
         if sys.platform.lower().startswith("sunos"):
@@ -91,7 +92,7 @@ class IsAliveTestCase(pexpect_test_case.PexpectTestCase):
 
     def test_expect_isalive_dead_after_sigint(self) -> None:
         """Report a child that ignores SIGHUP as no longer alive once terminate() escalates."""
-        p = pexpect.spawn("cat", timeout=5)
+        p = pexpect.spawn(commands.CAT, timeout=5)
         assert p.isalive()
         force = False
         if sys.platform.lower().startswith("sunos"):
@@ -104,7 +105,7 @@ class IsAliveTestCase(pexpect_test_case.PexpectTestCase):
 
     def test_expect_isalive_dead_after_sigkill(self) -> None:
         """Report a child killed outright with signal 9 as no longer alive."""
-        p = pexpect.spawn("cat", timeout=5)
+        p = pexpect.spawn(commands.CAT, timeout=5)
         assert p.isalive()
         p.kill(KILL_SIGNAL)
         p.expect(pexpect.EOF)
@@ -112,7 +113,7 @@ class IsAliveTestCase(pexpect_test_case.PexpectTestCase):
 
     def test_expect_isalive_consistent_multiple_calls(self) -> None:
         """Return the same value from repeated isalive() calls."""
-        p = pexpect.spawn("cat")
+        p = pexpect.spawn(commands.CAT)
         assert p.isalive()
         assert p.isalive()
         p.sendeof()

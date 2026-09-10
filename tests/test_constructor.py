@@ -18,6 +18,7 @@ OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 
 """
 
+import sys
 import unittest
 
 import pytest
@@ -32,6 +33,7 @@ pytestmark = pytest.mark.usefixtures("fast_sleep", "killed_pty_children")
 class TestCaseConstructor(pexpect_test_case.PexpectTestCase):
     """Tests for the ways spawn.__init__() can be called."""
 
+    @pytest.mark.skipif(sys.platform == "win32", reason="needs the POSIX program `uname`")
     def test_constructor(self) -> None:
         """Give the same result whether the arguments are in the command or a list."""
         p1 = pexpect.spawn("uname -m -n -p -r -s -v")
@@ -40,6 +42,7 @@ class TestCaseConstructor(pexpect_test_case.PexpectTestCase):
         p2.expect(pexpect.EOF)
         assert p1.before == p2.before
 
+    @pytest.mark.skipif(sys.platform == "win32", reason="needs the POSIX program `ls`")
     def test_named_parameters(self) -> None:
         """Accept command, args and timeout as keyword arguments."""
         pexpect.spawn("/bin/ls", timeout=10)
@@ -53,6 +56,12 @@ class TestCaseConstructor(pexpect_test_case.PexpectTestCase):
         with pytest.raises(pexpect.ExceptionPexpect):
             pexpect.spawn("   ")
 
+    # The plan's brief lists " ls" among the literals that need no skip, on the
+    # theory that they are only about split_command_line's parsing. That is true
+    # of the empty-command test above, but not of this one: p1 is a real spawn
+    # of `ls` that runs to completion below, so it needs `ls` to exist just as
+    # much as test_named_parameters does.
+    @pytest.mark.skipif(sys.platform == "win32", reason="needs the POSIX program `ls`")
     def test_leading_whitespace_resolves_same_command(self) -> None:
         """A leading space in the command string is not mistaken for an argument."""
         p1 = pexpect.spawn(" ls")

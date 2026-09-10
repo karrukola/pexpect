@@ -30,7 +30,7 @@ import pytest
 
 import pexpect
 
-from . import pexpect_test_case
+from . import commands, pexpect_test_case
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -91,6 +91,7 @@ class RunFuncTestCase(pexpect_test_case.PexpectTestCase):
         (_data, exitstatus) = self.runfunc(sys.executable + " exit1.py", withexitstatus=True)
         assert exitstatus == 1, "Exit status of 'python exit1.py' should be 1."
 
+    @pytest.mark.skipif(sys.platform == "win32", reason="needs the POSIX program `uname`")
     def test_run(self) -> None:
         """run() collects the same output as subprocess, minus the pty carriage returns."""
         the_old_way = (
@@ -108,6 +109,7 @@ class RunFuncTestCase(pexpect_test_case.PexpectTestCase):
         assert self.prep_subprocess_out(the_old_way) == the_new_way
         assert exitstatus == 0
 
+    @pytest.mark.skipif(sys.platform == "win32", reason="needs the POSIX program `uname`")
     def test_run_with_the_default_spawn_timeout(self) -> None:
         """Run a command without overriding the spawn timeout.
 
@@ -123,8 +125,9 @@ class RunFuncTestCase(pexpect_test_case.PexpectTestCase):
         """A TIMEOUT event callback can stop a child that never exits."""
         # TODO it seems like this test could block forever if run fails...
         events: _Events = {pexpect.TIMEOUT: timeout_callback}
-        self.runfunc("cat", timeout=0.01, events=events)
+        self.runfunc(commands.CAT, timeout=0.01, events=events)
 
+    @pytest.mark.skipif(sys.platform == "win32", reason="needs the POSIX program `ls`")
     def test_run_bad_exitstatus(self) -> None:
         """A failing command reports a non-zero exit status."""
         (_the_new_way, exitstatus) = self.runfunc("ls -l /najoeufhdnzkxjd", withexitstatus=True)

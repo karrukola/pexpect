@@ -4,7 +4,7 @@ import pytest
 
 import pexpect
 
-from . import pexpect_test_case
+from . import commands, pexpect_test_case
 
 pytestmark = pytest.mark.usefixtures("fast_sleep", "killed_pty_children")
 
@@ -14,7 +14,7 @@ class TestCaseDelay(pexpect_test_case.PexpectTestCase):
 
     def test_delaybeforesend(self) -> None:
         """Test various values for delaybeforesend."""
-        p = pexpect.spawn("cat")
+        p = pexpect.spawn(commands.CAT)
 
         p.delaybeforesend = 1
         p.sendline("line 1")
@@ -30,7 +30,7 @@ class TestCaseDelay(pexpect_test_case.PexpectTestCase):
 
     def test_delayafterread(self) -> None:
         """Test various values for delayafterread."""
-        p = pexpect.spawn("cat")
+        p = pexpect.spawn(commands.CAT)
 
         p.delayafterread = 1
         p.sendline("line 1")

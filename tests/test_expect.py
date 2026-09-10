@@ -32,7 +32,7 @@ import pytest
 
 import pexpect
 
-from . import pexpect_test_case
+from . import commands, pexpect_test_case
 from .utils import no_coverage_env
 
 if TYPE_CHECKING:
@@ -114,7 +114,7 @@ class ExpectTestCase(pexpect_test_case.PexpectTestCase):
 
     def test_expect_basic(self) -> None:
         """Match three patterns in the order they were sent, then EOF."""
-        p = pexpect.spawn("cat", echo=False, timeout=5)
+        p = pexpect.spawn(commands.CAT, echo=False, timeout=5)
         p.sendline(b"Hello")
         p.sendline(b"there")
         p.sendline(b"Mr. Python")
@@ -126,7 +126,7 @@ class ExpectTestCase(pexpect_test_case.PexpectTestCase):
 
     def test_expect_exact_basic(self) -> None:
         """Like test_expect_basic(), but matching literals with expect_exact()."""
-        p = pexpect.spawn("cat", echo=False, timeout=5)
+        p = pexpect.spawn(commands.CAT, echo=False, timeout=5)
         p.sendline(b"Hello")
         p.sendline(b"there")
         p.sendline(b"Mr. Python")
@@ -138,7 +138,7 @@ class ExpectTestCase(pexpect_test_case.PexpectTestCase):
 
     def test_expect_ignore_case(self) -> None:
         """Match patterns of differing case using the regex (?i) directive."""
-        p = pexpect.spawn("cat", echo=False, timeout=5)
+        p = pexpect.spawn(commands.CAT, echo=False, timeout=5)
         p.sendline(b"HELLO")
         p.sendline(b"there")
         p.expect(b"(?i)hello")
@@ -148,7 +148,7 @@ class ExpectTestCase(pexpect_test_case.PexpectTestCase):
 
     def test_expect_ignore_case_flag(self) -> None:
         """Match patterns of differing case once the ignorecase flag is set."""
-        p = pexpect.spawn("cat", echo=False, timeout=5)
+        p = pexpect.spawn(commands.CAT, echo=False, timeout=5)
         p.ignorecase = True
         p.sendline(b"HELLO")
         p.sendline(b"there")
@@ -159,28 +159,28 @@ class ExpectTestCase(pexpect_test_case.PexpectTestCase):
 
     def test_coerce_expect_re_enc_none(self) -> None:
         """Coerce a str pattern to bytes when the spawn has no encoding."""
-        p = pexpect.spawn("true")
+        p = pexpect.spawn(commands.TRUE)
         c = pexpect.spawnbase.SpawnBase._coerce_expect_re(p, re.compile("String"))
         assert isinstance(c.pattern, bytes)
         p.expect(pexpect.EOF)
 
     def test_coerce_expect_re_enc_ascii(self) -> None:
         """Coerce a bytes pattern to str when the spawn has ascii encoding."""
-        p = pexpect.spawn("true", encoding="ascii")
+        p = pexpect.spawn(commands.TRUE, encoding="ascii")
         c = pexpect.spawnbase.SpawnBase._coerce_expect_re(p, re.compile(b"String"))
         assert isinstance(c.pattern, str)
         p.expect(pexpect.EOF)
 
     def test_coerce_expect_re_enc_utf8(self) -> None:
         """Coerce a bytes pattern to str when the spawn has utf-8 encoding."""
-        p = pexpect.spawn("true", encoding="utf-8")
+        p = pexpect.spawn(commands.TRUE, encoding="utf-8")
         c = pexpect.spawnbase.SpawnBase._coerce_expect_re(p, re.compile(b"String"))
         assert isinstance(c.pattern, str)
         p.expect(pexpect.EOF)
 
     def test_expect_regex_enc_none(self) -> None:
         """Accept a regex compiled from str on a bytes mode spawn (encoding=None)."""
-        p = pexpect.spawn("cat", echo=False, timeout=5)
+        p = pexpect.spawn(commands.CAT, echo=False, timeout=5)
         p.sendline('We are the Knights who say "Ni!"')
         index = p.expect(
             [re.compile('We are the Knights who say "Ni!"'), pexpect.EOF, pexpect.TIMEOUT]
@@ -191,7 +191,7 @@ class ExpectTestCase(pexpect_test_case.PexpectTestCase):
 
     def test_expect_regex_enc_utf8(self) -> None:
         """Accept a regex compiled from bytes on a str mode spawn (encoding='utf-8')."""
-        p = pexpect.spawn("cat", echo=False, timeout=5, encoding="utf-8")
+        p = pexpect.spawn(commands.CAT, echo=False, timeout=5, encoding="utf-8")
         p.sendline('We are the Knights who say "Ni!"')
         index = p.expect(
             [re.compile(b'We are the Knights who say "Ni!"'), pexpect.EOF, pexpect.TIMEOUT]
@@ -207,12 +207,12 @@ class ExpectTestCase(pexpect_test_case.PexpectTestCase):
         (one of the) the leftmost matches in the input? -- grahn)
         ... agreed! -jquast, the buffer ptr isn't forwarded on match, see first two test cases
         """
-        p = pexpect.spawn("cat", echo=False, timeout=5)
+        p = pexpect.spawn(commands.CAT, echo=False, timeout=5)
         self._expect_order(p, p.expect)
 
     def test_expect_order_exact(self) -> None:
         """Like test_expect_order(), but using expect_exact()."""
-        p = pexpect.spawn("cat", echo=False, timeout=5)
+        p = pexpect.spawn(commands.CAT, echo=False, timeout=5)
         self._expect_order(p, p.expect_exact)
 
     def _expect_order(self, p: pexpect.spawn[bytes], expect: _Matcher) -> None:
@@ -243,7 +243,7 @@ class ExpectTestCase(pexpect_test_case.PexpectTestCase):
 
     def test_expect_setecho_off(self) -> None:
         """Toggle tty echo off half way through a session and keep matching."""
-        p = pexpect.spawn("cat", echo=True, timeout=5)
+        p = pexpect.spawn(commands.CAT, echo=True, timeout=5)
         try:
             self._expect_echo_toggle(p, p.expect)
         except OSError:
@@ -254,7 +254,7 @@ class ExpectTestCase(pexpect_test_case.PexpectTestCase):
 
     def test_expect_setecho_off_exact(self) -> None:
         """Like test_expect_setecho_off(), but using expect_exact()."""
-        p = pexpect.spawn("cat", echo=True, timeout=5)
+        p = pexpect.spawn(commands.CAT, echo=True, timeout=5)
         try:
             self._expect_echo_toggle(p, p.expect_exact)
         except OSError:
@@ -265,7 +265,7 @@ class ExpectTestCase(pexpect_test_case.PexpectTestCase):
 
     def test_waitnoecho(self) -> None:
         """Tests setecho(False) followed by waitnoecho()."""
-        p = pexpect.spawn("cat", echo=False, timeout=5)
+        p = pexpect.spawn(commands.CAT, echo=False, timeout=5)
         try:
             p.setecho(state=False)
             p.waitnoecho()
@@ -277,12 +277,12 @@ class ExpectTestCase(pexpect_test_case.PexpectTestCase):
 
     def test_expect_echo(self) -> None:
         """Match input twice over, because tty echo is on by default."""
-        p = pexpect.spawn("cat", echo=True, timeout=5)
+        p = pexpect.spawn(commands.CAT, echo=True, timeout=5)
         self._expect_echo(p, p.expect)
 
     def test_expect_echo_exact(self) -> None:
         """Like test_expect_echo(), but using expect_exact()."""
-        p = pexpect.spawn("cat", echo=True, timeout=5)
+        p = pexpect.spawn(commands.CAT, echo=True, timeout=5)
         self._expect_echo(p, p.expect_exact)
 
     def _expect_echo(self, p: pexpect.spawn[bytes], expect: _Matcher) -> None:
@@ -318,12 +318,12 @@ class ExpectTestCase(pexpect_test_case.PexpectTestCase):
 
     def test_expect_index(self) -> None:
         """Return the correct index for a mixed list of regexes, TIMEOUT and EOF."""
-        p = pexpect.spawn("cat", echo=False, timeout=5)
+        p = pexpect.spawn(commands.CAT, echo=False, timeout=5)
         self._expect_index(p, p.expect)
 
     def test_expect_index_exact(self) -> None:
         """Like test_expect_index(), but using expect_exact()."""
-        p = pexpect.spawn("cat", echo=False, timeout=5)
+        p = pexpect.spawn(commands.CAT, echo=False, timeout=5)
         self._expect_index(p, p.expect_exact)
 
     def _expect_index(self, p: pexpect.spawn[bytes], expect: _Matcher) -> None:
@@ -346,6 +346,9 @@ class ExpectTestCase(pexpect_test_case.PexpectTestCase):
         index = expect(patterns)
         assert patterns[index] == pexpect.EOF, "index=" + str(index)
 
+    @pytest.mark.skipif(
+        sys.platform == "win32", reason="needs the POSIX program `ls`, and its output"
+    )
     def test_expect(self) -> None:
         """Read `ls -l /bin` line by line and compare it with subprocess output."""
         the_old_way = (
@@ -379,6 +382,9 @@ class ExpectTestCase(pexpect_test_case.PexpectTestCase):
         )
         assert the_old_way == the_new_way, hex_diff(the_old_way, the_new_way)
 
+    @pytest.mark.skipif(
+        sys.platform == "win32", reason="needs the POSIX program `ls`, and its output"
+    )
     def test_expect_exact(self) -> None:
         """Like test_expect(), but with expect_exact(), including a literal '.?'."""
         the_old_way = (
@@ -410,7 +416,7 @@ class ExpectTestCase(pexpect_test_case.PexpectTestCase):
             .rstrip()
         )
         assert the_old_way == the_new_way, hex_diff(the_old_way, the_new_way)
-        p = pexpect.spawn("echo hello.?world")
+        p = pexpect.spawn(commands.echo("hello.?world"))
         i = p.expect_exact(b".?")
         assert p.before == b"hello"
         assert p.after == b".?"
@@ -425,7 +431,7 @@ class ExpectTestCase(pexpect_test_case.PexpectTestCase):
         zero-length match flush against the end of the window used to make
         the slice collapse to `[0:0]`.
         """
-        p = pexpect.spawn("cat", encoding="utf-8", timeout=5)
+        p = pexpect.spawn(commands.CAT, encoding="utf-8", timeout=5)
         p.send("abcdef")
         p.expect_exact("abc")
         assert p.buffer == "def"
@@ -443,7 +449,7 @@ class ExpectTestCase(pexpect_test_case.PexpectTestCase):
         two documents the exact boundary the fix in do_search() has to get
         right.
         """
-        p = pexpect.spawn("cat", encoding="utf-8", timeout=5)
+        p = pexpect.spawn(commands.CAT, encoding="utf-8", timeout=5)
         p.send("abcdef")
         p.expect_exact("abc")
         assert p.buffer == "def"
@@ -465,7 +471,7 @@ class ExpectTestCase(pexpect_test_case.PexpectTestCase):
         a character `before` never actually held. The fix must clamp instead,
         leaving `before` empty exactly as it is today.
         """
-        p = pexpect.spawn("cat", encoding="utf-8", timeout=5)
+        p = pexpect.spawn(commands.CAT, encoding="utf-8", timeout=5)
         p.send("abcxy")
         p.expect_exact("abc")
         assert p.before == ""
@@ -478,6 +484,9 @@ class ExpectTestCase(pexpect_test_case.PexpectTestCase):
         assert p.after == "a"
         p.close(force=True)
 
+    @pytest.mark.skipif(
+        sys.platform == "win32", reason="needs the POSIX program `ls`, and its output"
+    )
     def test_expect_eof(self) -> None:
         """Read everything `ls -l /bin` prints by expecting EOF."""
         the_old_way = (
@@ -507,10 +516,11 @@ class ExpectTestCase(pexpect_test_case.PexpectTestCase):
 
     def test_expect_timeout(self) -> None:
         """Set `after` to TIMEOUT when TIMEOUT is the pattern that matched."""
-        p = pexpect.spawn("cat", timeout=0.01)
+        p = pexpect.spawn(commands.CAT, timeout=0.01)
         p.expect(pexpect.TIMEOUT)  # This tells it to wait for timeout.
         assert p.after == pexpect.TIMEOUT
 
+    @pytest.mark.skipif(sys.platform == "win32", reason="needs the POSIX program `ls`")
     def test_unexpected_eof(self) -> None:
         """Raise EOF when the child exits before the pattern is seen."""
         p = pexpect.spawn("ls -l /bin")
@@ -523,7 +533,7 @@ class ExpectTestCase(pexpect_test_case.PexpectTestCase):
 
     def test_buffer_interface(self) -> None:
         """Leave unread data in `buffer`, which may also be assigned to."""
-        p = pexpect.spawn("cat", timeout=5)
+        p = pexpect.spawn(commands.CAT, timeout=5)
         p.sendline(b"Hello")
         p.expect(b"Hello")
         assert len(p.buffer) > 0
@@ -566,7 +576,7 @@ class ExpectTestCase(pexpect_test_case.PexpectTestCase):
 
     def test_before_after_timeout(self) -> None:
         """Tests that timeouts do not truncate before, a bug in 4.4-4.7."""
-        child = pexpect.spawn("cat", echo=False)
+        child = pexpect.spawn(commands.CAT, echo=False)
         # 101 sendlines below, each one paying delaybeforesend. Nothing is read
         # back between them, so there is no echo to race with.
         child.delaybeforesend = None
@@ -585,7 +595,7 @@ class ExpectTestCase(pexpect_test_case.PexpectTestCase):
 
     def test_increasing_searchwindowsize(self) -> None:
         """Tests that the search window can be expanded, a bug in 4.4-4.7."""
-        child = pexpect.spawn("cat", echo=False)
+        child = pexpect.spawn(commands.CAT, echo=False)
         # 101 sendlines below, each one paying delaybeforesend. Nothing is read
         # back between them, so there is no echo to race with.
         child.delaybeforesend = None
@@ -603,13 +613,13 @@ class ExpectTestCase(pexpect_test_case.PexpectTestCase):
 
     def test_searchwindowsize(self) -> None:
         """Tests that we don't match outside the window, a bug in 4.4-4.7."""
-        p = pexpect.spawn("echo foobarbazbop")
+        p = pexpect.spawn(commands.echo("foobarbazbop"))
         e = p.expect([b"bar", b"bop"], searchwindowsize=6)
         assert e == 1
 
     def test_bad_arg(self) -> None:
         """Reject a pattern that is neither a string, a regex, EOF nor TIMEOUT."""
-        p = pexpect.spawn("cat")
+        p = pexpect.spawn(commands.CAT)
         # What is under test is the value the signatures already rule out, so
         # it reaches them through a name that claims to be a pattern.
         not_a_pattern = cast("_Pattern", 1)
@@ -630,7 +640,7 @@ class ExpectTestCase(pexpect_test_case.PexpectTestCase):
         When each is called with that keyword set to False,
         Then the call behaves like a plain synchronous match.
         """
-        p = pexpect.spawn("echo abcdef")
+        p = pexpect.spawn(commands.echo("abcdef"))
         assert p.expect("abc", **{"async": False}) == 0
         assert p.expect_exact("de", **{"async": False}) == 0
         assert p.expect_list([re.compile(b"f")], **{"async": False}) == 0
@@ -642,7 +652,7 @@ class ExpectTestCase(pexpect_test_case.PexpectTestCase):
         When each is called with an unknown keyword argument,
         Then :exc:`TypeError` is raised naming the unknown arguments.
         """
-        p = pexpect.spawn("cat")
+        p = pexpect.spawn(commands.CAT)
         with pytest.raises(TypeError, match=r"Unknown keyword arguments"):
             p.expect("abc", nonexistent=1)
         with pytest.raises(TypeError, match=r"Unknown keyword arguments"):
@@ -659,17 +669,18 @@ class ExpectTestCase(pexpect_test_case.PexpectTestCase):
         translate the -1 default into the spawn timeout,
         Then the index of the matching pattern is returned.
         """
-        p = pexpect.spawn("echo abcdef")
+        p = pexpect.spawn(commands.echo("abcdef"))
         assert p.expect_loop(pexpect.searcher_string([b"abc"]), timeout=10) == 0
         assert p.expect_loop(pexpect.searcher_re([re.compile(b"def")]), timeout=10) == 0
 
     def test_timeout_none(self) -> None:
         """Match without a timeout when timeout=None."""
-        p = pexpect.spawn("echo abcdef", timeout=None)
+        p = pexpect.spawn(commands.echo("abcdef"), timeout=None)
         p.expect("abc")
         p.expect_exact("def")
         p.expect(pexpect.EOF)
 
+    @pytest.mark.skipif(sys.platform == "win32", reason="needs the POSIX shell `sh`")
     def test_timeout_none_across_reads(self) -> None:
         """Keep reading without a timeout until the pattern is complete.
 
@@ -733,7 +744,7 @@ class ExpectTestCase(pexpect_test_case.PexpectTestCase):
             def run(self) -> None:
                 assert sys.__stdin__ is not None
                 sys.__stdin__.close()
-                cat = pexpect.spawn("cat")
+                cat = pexpect.spawn(commands.CAT)
                 cat.sendeof()
                 cat.expect(pexpect.EOF)
 
@@ -751,7 +762,7 @@ class ExpectTestCase(pexpect_test_case.PexpectTestCase):
                 assert sys.__stdout__ is not None
                 sys.__stdin__.close()
                 sys.__stdout__.close()
-                cat = pexpect.spawn("cat")
+                cat = pexpect.spawn(commands.CAT)
                 cat.sendeof()
                 cat.expect(pexpect.EOF)
 

@@ -25,7 +25,7 @@ import pytest
 
 import pexpect
 
-from . import pexpect_test_case
+from . import commands, pexpect_test_case
 
 pytestmark = pytest.mark.usefixtures("fast_sleep", "killed_pty_children")
 testdata = "BEGIN\nHello world\nEND"
@@ -36,13 +36,13 @@ class TestCaseDotall(pexpect_test_case.PexpectTestCase):
 
     def test_dotall(self) -> None:
         """Match a pattern spanning newlines, since expect() implies DOTALL."""
-        p = pexpect.spawn(f'echo "{testdata}"')
+        p = pexpect.spawn(commands.echo(f'"{testdata}"'))
         i = p.expect([b"BEGIN(.*)END", pexpect.EOF])
         assert i == 0, "DOTALL does not seem to be working."
 
     def test_precompiled(self) -> None:
         """Honour the flags of a precompiled pattern instead of adding DOTALL."""
-        p = pexpect.spawn(f'echo "{testdata}"')
+        p = pexpect.spawn(commands.echo(f'"{testdata}"'))
         pat = re.compile(b"BEGIN(.*)END")  # This overrides the default DOTALL.
         i = p.expect([pat, pexpect.EOF])
         assert i == 1, "Precompiled pattern to override DOTALL does not seem to be working."

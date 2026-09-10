@@ -24,7 +24,7 @@ import pytest
 
 import pexpect
 
-from . import pexpect_test_case
+from . import commands, pexpect_test_case
 
 pytestmark = pytest.mark.usefixtures("fast_sleep", "killed_pty_children")
 # The tests below only look at the TIMEOUT they provoke, never at how long the
@@ -51,7 +51,7 @@ class ExpTimeoutTestCase(pexpect_test_case.PexpectTestCase):
         Make sure it is returning the pattern from the correct call.
         """
         try:
-            p = pexpect.spawn("cat")
+            p = pexpect.spawn(commands.CAT)
             p.sendline("Hello")
             p.expect("Hello")
             p.expect("Goodbye", timeout=_TIMEOUT)
@@ -63,7 +63,7 @@ class ExpTimeoutTestCase(pexpect_test_case.PexpectTestCase):
     def test_exp_timeout_not_thrown(self) -> None:
         """Verify that a TIMEOUT is not thrown when we match what we expect."""
         try:
-            p = pexpect.spawn("cat")
+            p = pexpect.spawn(commands.CAT)
             p.sendline("Hello")
             p.expect("Hello")
         except pexpect.TIMEOUT:
@@ -74,7 +74,7 @@ class ExpTimeoutTestCase(pexpect_test_case.PexpectTestCase):
     def test_stacktrace_munging(self) -> None:
         """Keep references to pexpect itself out of a TIMEOUT stack trace."""
         try:
-            p = pexpect.spawn("cat")
+            p = pexpect.spawn(commands.CAT)
             p.sendline("Hello")
             p.expect("Goodbye", timeout=_TIMEOUT)
         except pexpect.TIMEOUT as err:
@@ -91,7 +91,7 @@ class ExpTimeoutTestCase(pexpect_test_case.PexpectTestCase):
             spawn_instance.expect("junk", timeout=_TIMEOUT)
 
         try:
-            p = pexpect.spawn("cat")
+            p = pexpect.spawn(commands.CAT)
             p.sendline("Hello")
             nested_function(p)
         except pexpect.TIMEOUT as err:

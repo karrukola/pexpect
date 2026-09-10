@@ -38,7 +38,7 @@ import pytest
 import pexpect
 from pexpect import pty_spawn
 
-from . import pexpect_test_case
+from . import commands, pexpect_test_case
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -68,7 +68,7 @@ class TestCaseMisc(pexpect_test_case.PexpectTestCase):
 
     def test_isatty(self) -> None:
         """Test isatty() is True after spawning process on most platforms."""
-        child = pexpect.spawn("cat")
+        child = pexpect.spawn(commands.CAT)
         if not child.isatty() and sys.platform.lower().startswith("sunos"):
             msg = "Not supported on this platform."
             raise unittest.SkipTest(msg)
@@ -76,7 +76,7 @@ class TestCaseMisc(pexpect_test_case.PexpectTestCase):
 
     def test_isatty_poll(self) -> None:
         """Test isatty() is True after spawning process on most platforms."""
-        child = pexpect.spawn("cat", use_poll=True)
+        child = pexpect.spawn(commands.CAT, use_poll=True)
         if not child.isatty() and sys.platform.lower().startswith("sunos"):
             msg = "Not supported on this platform."
             raise unittest.SkipTest(msg)
@@ -84,7 +84,7 @@ class TestCaseMisc(pexpect_test_case.PexpectTestCase):
 
     def test_read(self) -> None:
         """Test spawn.read by calls of various size."""
-        child = pexpect.spawn("cat")
+        child = pexpect.spawn(commands.CAT)
         child.sendline("abc")
         child.sendeof()
         assert child.read(0) == b""
@@ -97,7 +97,7 @@ class TestCaseMisc(pexpect_test_case.PexpectTestCase):
 
     def test_read_poll(self) -> None:
         """Test spawn.read by calls of various size."""
-        child = pexpect.spawn("cat", use_poll=True)
+        child = pexpect.spawn(commands.CAT, use_poll=True)
         child.sendline("abc")
         child.sendeof()
         assert child.read(0) == b""
@@ -110,14 +110,19 @@ class TestCaseMisc(pexpect_test_case.PexpectTestCase):
 
     def test_read_poll_timeout(self) -> None:
         """Test use_poll properly times out."""
-        child = pexpect.spawn("sleep 5", use_poll=True)
+        child = pexpect.spawn(commands.sleep(5), use_poll=True)
         with pytest.raises(pexpect.TIMEOUT):
             child.expect(pexpect.EOF, timeout=0.01)
 
     def test_readline_bin_echo(self) -> None:
         """Test spawn('echo')."""
         # given,
-        child = pexpect.spawn("echo", ["alpha", "beta"])
+        # commands.echo() only hands back a full command string, so the
+        # command-plus-args-list constructor form this test used to exercise
+        # collapses into the command-string form; the child process pexpect
+        # execs is the same either way, since spawn() splits a string command
+        # into exactly this argument list before it execs.
+        child = pexpect.spawn(commands.echo("alpha beta"))
 
         # exercise,
         assert child.readline() == b"alpha beta" + child.crlf
@@ -126,7 +131,7 @@ class TestCaseMisc(pexpect_test_case.PexpectTestCase):
         """Test spawn.readline()."""
         # when argument 0 is sent, nothing is returned.
         # Otherwise the argument value is meaningless.
-        child = pexpect.spawn("cat", echo=False)
+        child = pexpect.spawn(commands.CAT, echo=False)
         child.sendline("alpha")
         child.sendline("beta")
         child.sendline("gamma")
@@ -143,7 +148,7 @@ class TestCaseMisc(pexpect_test_case.PexpectTestCase):
 
     def test_iter(self) -> None:
         """Iterating over lines of spawn.__iter__()."""
-        child = pexpect.spawn("cat", echo=False)
+        child = pexpect.spawn(commands.CAT, echo=False)
         child.sendline("abc")
         child.sendline("123")
         child.sendeof()
@@ -156,7 +161,7 @@ class TestCaseMisc(pexpect_test_case.PexpectTestCase):
 
     def test_readlines(self) -> None:
         """Reading all lines of spawn.readlines()."""
-        child = pexpect.spawn("cat", echo=False)
+        child = pexpect.spawn(commands.CAT, echo=False)
         child.sendline("abc")
         child.sendline("123")
         child.sendeof()
@@ -168,14 +173,14 @@ class TestCaseMisc(pexpect_test_case.PexpectTestCase):
 
     def test_write(self) -> None:
         """Write a character and return it in return."""
-        child = pexpect.spawn("cat", echo=False)
+        child = pexpect.spawn(commands.CAT, echo=False)
         child.write("a")
         child.write("\r")
         assert child.readline() == b"a\r\n"
 
     def test_writelines(self) -> None:
         """spawn.writelines()."""
-        child = pexpect.spawn("cat")
+        child = pexpect.spawn(commands.CAT)
         # notice that much like file.writelines, we do not delimit by newline
         # -- it is equivalent to calling write(''.join([args,]))
         child.writelines(["abc", "123", "xyz", "\r"])
@@ -185,7 +190,7 @@ class TestCaseMisc(pexpect_test_case.PexpectTestCase):
 
     def test_eof(self) -> None:
         """Call to expect() after EOF is received raises pexpect.EOF."""
-        child = pexpect.spawn("cat")
+        child = pexpect.spawn(commands.CAT)
         child.sendeof()
         with pytest.raises(pexpect.EOF):
             child.expect("the unexpected")
@@ -205,7 +210,7 @@ class TestCaseMisc(pexpect_test_case.PexpectTestCase):
 
     def test_terminate(self) -> None:
         """Test force terminate always succeeds (SIGKILL)."""
-        child = pexpect.spawn("cat")
+        child = pexpect.spawn(commands.CAT)
         child.terminate(force=True)
         assert child.terminated
 
@@ -217,7 +222,7 @@ class TestCaseMisc(pexpect_test_case.PexpectTestCase):
         When :meth:`pexpect.spawn.write_to_stdout` is called,
         Then the bytes are decoded and written to the text stream.
         """
-        child = pexpect.spawn("cat")
+        child = pexpect.spawn(commands.CAT)
         stdout = io.StringIO()
         with mock.patch.object(sys, "stdout", stdout):
             child.write_to_stdout(b"hello")
@@ -232,7 +237,7 @@ class TestCaseMisc(pexpect_test_case.PexpectTestCase):
         the child produced,
         Then everything the child printed is returned.
         """
-        child = pexpect.spawn("echo abc")
+        child = pexpect.spawn(commands.echo("abc"))
         assert child.read(1000) == b"abc\r\n"
 
     def test_eof_flag(self) -> None:
@@ -242,7 +247,7 @@ class TestCaseMisc(pexpect_test_case.PexpectTestCase):
         When it is sent an EOF and the EOF exception has been raised,
         Then :meth:`pexpect.spawn.eof` changes from False to True.
         """
-        child = pexpect.spawn("cat")
+        child = pexpect.spawn(commands.CAT)
         assert not child.eof()
 
         child.sendeof()
@@ -256,7 +261,7 @@ class TestCaseMisc(pexpect_test_case.PexpectTestCase):
         When :meth:`pexpect.spawn.terminate` is called,
         Then it returns True without sending any signal.
         """
-        child = pexpect.spawn("cat")
+        child = pexpect.spawn(commands.CAT)
         child.sendeof()
         child.expect(pexpect.EOF)
         assert child.terminate()
@@ -270,7 +275,7 @@ class TestCaseMisc(pexpect_test_case.PexpectTestCase):
         Then the error is swallowed and the result is the answer of one final
         liveness check.
         """
-        child = pexpect.spawn("cat")
+        child = pexpect.spawn(commands.CAT)
         child.sendeof()
         child.expect(pexpect.EOF)
 
@@ -289,7 +294,7 @@ class TestCaseMisc(pexpect_test_case.PexpectTestCase):
         timeout,
         Then :exc:`pexpect.EOF` is raised.
         """
-        child = pexpect.spawn("cat")
+        child = pexpect.spawn(commands.CAT)
         with (
             mock.patch.object(child, "isalive", return_value=False),
             mock.patch.object(child, "_ready", return_value=False),
@@ -305,7 +310,7 @@ class TestCaseMisc(pexpect_test_case.PexpectTestCase):
         When :meth:`pexpect.spawn.read_nonblocking` is called,
         Then :exc:`pexpect.EOF` is raised instead of a timeout.
         """
-        child = pexpect.spawn("cat")
+        child = pexpect.spawn(commands.CAT)
         with (
             mock.patch.object(child, "isalive", side_effect=[True, False]),
             pytest.raises(pexpect.EOF, match="Very slow platform"),
@@ -321,7 +326,7 @@ class TestCaseMisc(pexpect_test_case.PexpectTestCase):
         Then the wait is stretched to that minimum before TIMEOUT is raised.
         """
         with mock.patch.object(sys, "platform", "irix6.5"):
-            child = pexpect.spawn("cat")
+            child = pexpect.spawn(commands.CAT)
 
         started = time.time()
         with (
@@ -340,7 +345,7 @@ class TestCaseMisc(pexpect_test_case.PexpectTestCase):
         When interact() copies a chunk from the child to stdout,
         Then the copy reports that there is nothing more to read.
         """
-        child = pexpect.spawn("cat")
+        child = pexpect.spawn(commands.CAT)
         with mock.patch.object(child, _INTERACT_READ, return_value=b""):
             child_to_stdout = getattr(child, _INTERACT_CHILD_TO_STDOUT)
             assert child_to_stdout(None) is False
@@ -352,9 +357,9 @@ class TestCaseMisc(pexpect_test_case.PexpectTestCase):
         When _spawn() is called again,
         Then :exc:`pexpect.ExceptionPexpect` complains about the pid member.
         """
-        child = pexpect.spawn("cat")
+        child = pexpect.spawn(commands.CAT)
         with pytest.raises(pexpect.ExceptionPexpect, match="pid member must be None"):
-            child._spawn("cat")
+            child._spawn(commands.CAT)
 
     def test_spawn_refuses_an_unresolved_command(self) -> None:
         """Refuse to spawn when the command could not be resolved.
@@ -373,7 +378,7 @@ class TestCaseMisc(pexpect_test_case.PexpectTestCase):
 
         child = UnresolvingSpawn(None)
         with pytest.raises(pexpect.ExceptionPexpect, match="command member must not be None"):
-            child._spawn("cat")
+            child._spawn(commands.CAT)
 
     def test_ignore_sighup_wraps_the_preexec_function(self) -> None:
         """Ignore SIGHUP in the child before running the caller's preexec_fn.
@@ -425,7 +430,7 @@ class TestCaseMisc(pexpect_test_case.PexpectTestCase):
         When :meth:`pexpect.spawn.read_nonblocking` is called,
         Then the output is returned rather than EOF being raised.
         """
-        child = pexpect.spawn("echo alpha")
+        child = pexpect.spawn(commands.echo("alpha"))
         deadline = time.time() + 5
         while child.isalive() and time.time() < deadline:
             time.sleep(0.05)
@@ -450,7 +455,7 @@ class TestCaseMisc(pexpect_test_case.PexpectTestCase):
     def test_bad_child_pid(self) -> None:
         """Assert bad condition error in isalive()."""
         expect_errmsg = re.escape("isalive() encountered condition where ")
-        child = pexpect.spawn("cat")
+        child = pexpect.spawn(commands.CAT)
         child.terminate(force=True)
         # Force an invalid state to test isalive
         child.ptyproc.terminated = False
@@ -486,29 +491,29 @@ class TestCaseMisc(pexpect_test_case.PexpectTestCase):
         """Calling read_nonblocking after close raises ValueError."""
         # as read_nonblocking underlies all other calls to read,
         # ValueError should be thrown for all forms of read.
-        p = pexpect.spawn("cat")
+        p = pexpect.spawn(commands.CAT)
         p.close()
         with pytest.raises(ValueError, match=_CLOSED_FILE_ERRMSG):
             p.read_nonblocking()
 
-        p = pexpect.spawn("cat")
+        p = pexpect.spawn(commands.CAT)
         p.close()
         with pytest.raises(ValueError, match=_CLOSED_FILE_ERRMSG):
             p.read()
 
-        p = pexpect.spawn("cat")
+        p = pexpect.spawn(commands.CAT)
         p.close()
         with pytest.raises(ValueError, match=_CLOSED_FILE_ERRMSG):
             p.readline()
 
-        p = pexpect.spawn("cat")
+        p = pexpect.spawn(commands.CAT)
         p.close()
         with pytest.raises(ValueError, match=_CLOSED_FILE_ERRMSG):
             p.readlines()
 
     def test_isalive(self) -> None:
         """Check isalive() before and after EOF. (True, False)."""
-        child = pexpect.spawn("cat")
+        child = pexpect.spawn(commands.CAT)
         assert child.isalive() is True
         child.sendeof()
         child.expect(pexpect.EOF)
@@ -516,7 +521,7 @@ class TestCaseMisc(pexpect_test_case.PexpectTestCase):
 
     def test_bad_type_in_expect(self) -> None:
         """expect() does not accept dictionary arguments."""
-        child = pexpect.spawn("cat")
+        child = pexpect.spawn(commands.CAT)
         # a dict is not a pattern, which is what the call below checks
         matcher: Callable[..., int] = child.expect
         with pytest.raises(TypeError):
@@ -610,7 +615,7 @@ class TestCaseMisc(pexpect_test_case.PexpectTestCase):
                 pexpect.spawn._spawn(self, command, args, preexec_fn, dimensions)
 
         # exercise,
-        p = SpawnOurPtyFork("cat", echo=False)
+        p = SpawnOurPtyFork(commands.CAT, echo=False)
         # verify,
         p.sendline("abc")
         p.expect("abc")
@@ -620,7 +625,7 @@ class TestCaseMisc(pexpect_test_case.PexpectTestCase):
 
     def test_exception_tb(self) -> None:
         """Test get_trace() filters away pexpect/__init__.py calls."""
-        p = pexpect.spawn("sleep 0.01")
+        p = pexpect.spawn(commands.sleep(0.01))
         try:
             p.expect("BLAH")
         except pexpect.ExceptionPexpect as e:
@@ -641,7 +646,7 @@ class TestCaseMisc(pexpect_test_case.PexpectTestCase):
         package rather than naming individual modules by hand.
         """
         package_dir = str(Path(pexpect.__file__).parent)
-        p = pexpect.spawn("sleep 0.01")
+        p = pexpect.spawn(commands.sleep(0.01))
         try:
             p.expect("BLAH")
         except pexpect.ExceptionPexpect as e:
@@ -660,7 +665,7 @@ class TestCaseMisc(pexpect_test_case.PexpectTestCase):
         def nested_function(spawn_instance: pexpect.spawn) -> None:
             spawn_instance.expect("BLAH")
 
-        p = pexpect.spawn("sleep 0.01")
+        p = pexpect.spawn(commands.sleep(0.01))
         try:
             nested_function(p)
         except pexpect.ExceptionPexpect as e:

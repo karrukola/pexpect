@@ -14,7 +14,7 @@ import pytest
 
 import pexpect
 
-from . import pexpect_test_case
+from . import commands, pexpect_test_case
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -38,7 +38,7 @@ class UnicodeTests(pexpect_test_case.PexpectTestCase):
 
     def test_expect_basic(self) -> None:
         """Match non-ASCII lines echoed back by cat."""
-        p = pexpect.spawnu("cat")
+        p = pexpect.spawnu(commands.CAT)
         p.sendline("Hello")
         p.sendline("there")
         p.sendline("Mr. þython")  # þ is more like th than p, but never mind
@@ -50,7 +50,7 @@ class UnicodeTests(pexpect_test_case.PexpectTestCase):
 
     def test_expect_exact_basic(self) -> None:
         """Match non-ASCII lines with expect_exact()."""
-        p = pexpect.spawnu("cat")
+        p = pexpect.spawnu(commands.CAT)
         p.sendline("Hello")
         p.sendline("there")
         p.sendline("Mr. þython")
@@ -62,7 +62,7 @@ class UnicodeTests(pexpect_test_case.PexpectTestCase):
 
     def test_expect_setecho_toggle(self) -> None:
         """Toggle tty echo off and then back on."""
-        p = pexpect.spawnu("cat", timeout=5)
+        p = pexpect.spawnu(commands.CAT, timeout=5)
         try:
             self._expect_echo_toggle_off(p, p.expect)
         except OSError:
@@ -74,12 +74,12 @@ class UnicodeTests(pexpect_test_case.PexpectTestCase):
 
     def test_expect_echo_exact(self) -> None:
         """Like test_expect_echo(), but using expect_exact()."""
-        p = pexpect.spawnu("cat", timeout=5)
+        p = pexpect.spawnu(commands.CAT, timeout=5)
         self._expect_echo(p, p.expect_exact)
 
     def test_expect_setecho_toggle_exact(self) -> None:
         """Toggle tty echo off and back on while using expect_exact()."""
-        p = pexpect.spawnu("cat", timeout=5)
+        p = pexpect.spawnu(commands.CAT, timeout=5)
         try:
             self._expect_echo_toggle_off(p, p.expect_exact)
         except OSError:
@@ -125,7 +125,7 @@ class UnicodeTests(pexpect_test_case.PexpectTestCase):
         tmpdir = Path(tempfile.mkdtemp())
         path_send = tmpdir / "logfile_send"
         path_read = tmpdir / "logfile_read"
-        p = pexpect.spawnu("cat")
+        p = pexpect.spawnu(commands.CAT)
         # both log files are closed further down, after the child has exited
         p.logfile_send = path_send.open("w", encoding="utf-8")
         p.logfile_read = path_read.open("w", encoding="utf-8")
@@ -151,7 +151,7 @@ class UnicodeTests(pexpect_test_case.PexpectTestCase):
         """Expect ASCII-only unicode patterns from a bytes-based spawn."""
         # A bytes-based spawn should be able to handle ASCII-only unicode, for
         # backwards compatibility.
-        p = pexpect.spawn("cat")
+        p = pexpect.spawn(commands.CAT)
         p.sendline("Camelot")
         p.expect("Camelot")
 
@@ -165,7 +165,7 @@ class UnicodeTests(pexpect_test_case.PexpectTestCase):
     def test_spawn_send_unicode(self) -> None:
         """Send non-ASCII text through a bytes-based spawn."""
         # A bytes-based spawn should be able to send arbitrary unicode
-        p = pexpect.spawn("cat")
+        p = pexpect.spawn(commands.CAT)
         p.sendline("3½")
         p.sendeof()
         p.expect(pexpect.EOF)
@@ -177,7 +177,7 @@ class UnicodeTests(pexpect_test_case.PexpectTestCase):
         # does not align exactly at a utf-8 multibyte boundary:
         #    UnicodeDecodeError: 'utf8' codec can't decode byte 0xe2 in
         #                        position 0: unexpected end of data
-        p = pexpect.spawnu("cat", maxread=1)
+        p = pexpect.spawnu(commands.CAT, maxread=1)
         p.sendline("▁▂▃▄▅▆▇█")
         p.sendeof()
         p.expect("▁▂▃▄▅▆▇█")
@@ -188,19 +188,18 @@ class UnicodeTests(pexpect_test_case.PexpectTestCase):
         # a TypeError when concatenating a bytestring to a unicode type.
 
         # given,
-        child = pexpect.spawnu(
-            "echo",
-            [
-                "input",
-            ],
-        )
+        # commands.echo() only hands back a full command string, so the
+        # command-plus-args-list constructor form this test used to exercise
+        # collapses into the command-string form (see tests/test_misc.py's
+        # test_readline_bin_echo for the same substitution).
+        child = pexpect.spawnu(commands.echo("input"))
 
         # exercise,
         assert child.readline() == "input" + child.crlf
 
     def test_unicode_argv(self) -> None:
         """Ensure a program can be executed with unicode arguments."""
-        p = pexpect.spawn(f"echo {_UNICODE_ARGV}", timeout=5, encoding="utf8")
+        p = pexpect.spawn(commands.echo(_UNICODE_ARGV), timeout=5, encoding="utf8")
         p.expect(_UNICODE_ARGV)
         p.expect(pexpect.EOF)
         assert not p.isalive()
