@@ -91,7 +91,22 @@ class REPLWrapIntegrationTestCase(unittest.TestCase):
         Then the wrapper adopts it and runs commands through it.
         """
         bashrc = Path(replwrap.__file__).parent / "bashrc.sh"
-        child = pexpect.spawn("bash", ["--rcfile", str(bashrc)], timeout=5, encoding="utf-8")
+        # echo=False, as `replwrap.bash()` itself spawns, and not a detail:
+        # bash configures the terminal while it starts and echo is part of
+        # what it configures, so handing it over with echo still on leaves
+        # `REPLWrapper.__init__`'s own setecho(False) racing bash's startup.
+        # Losing that race puts the echo of the prompt-change command into the
+        # stream, and that command's text contains both of the strings
+        # `_expect_prompt` searches for -- the PS1 it sets is matched as the
+        # prompt and the PS2 left behind is then read as a continuation
+        # prompt, so the next `run_command` raises "Continuation prompt found
+        # - input was incomplete". Spawning with echo off never opens the
+        # window. The adoption of a spawn that still has echo on is covered by
+        # `test_existing_spawn_with_echo_on`, against a REPL that leaves the
+        # terminal alone.
+        child = pexpect.spawn(
+            "bash", ["--rcfile", str(bashrc)], timeout=5, encoding="utf-8", echo=False
+        )
         repl = replwrap.REPLWrapper(
             child, re.compile("[$#]"), "PS1='{0}' PS2='{1}' PROMPT_COMMAND=''"
         )
@@ -100,6 +115,34 @@ class REPLWrapIntegrationTestCase(unittest.TestCase):
         res = repl.run_command("echo $HOME")
         print(res)
         assert res.startswith("/"), res
+
+    def test_existing_spawn_with_echo_on(self) -> None:
+        """Turn echo off on a spawn that is handed over with it still on.
+
+        Given a child spawned without ``echo=False``,
+        When it is adopted by :class:`replwrap.REPLWrapper`,
+        Then the wrapper turns echo off before it sends anything, so what it
+        reads back is the REPL's output and not its own input.
+
+        The stand-in REPL is driven rather than a shell because it leaves the
+        terminal alone; a shell sets echo itself as it starts, and which write
+        lands last is a race that has nothing to do with what this test is
+        about. See `test_existing_spawn`.
+        """
+        script = Path(__file__).parent.parent / "no_editor_repl.py"
+        child = pexpect.spawn(sys.executable, [str(script)], timeout=5, encoding="utf-8")
+        # getecho() reads the terminal; `spawn.echo` only ever holds what the
+        # constructor was given, which is what REPLWrapper reads to decide
+        # whether there is anything to turn off.
+        assert child.getecho()
+        repl = replwrap.REPLWrapper(
+            child,
+            "[STANDIN_PROMPT>",
+            prompt_change=None,
+            continuation_prompt="[STANDIN_PROMPT+",
+        )
+        assert not child.getecho()
+        assert repl.run_command("hello").strip() == "HELLO"
 
     def test_pager_as_cat(self) -> None:
         """PAGER is set to cat, to prevent timeout in ``man sleep``."""
