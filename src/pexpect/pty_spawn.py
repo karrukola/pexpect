@@ -264,7 +264,14 @@ class spawn(SpawnBase[AnyStr]):
             encoding=encoding,
             codec_errors=codec_errors,
         )
-        if use_poll:
+        if use_poll:  # noqa: SIM102 -- see the nested `if` below
+            # Kept nested rather than combined into `use_poll and sys.platform
+            # == "win32"`: pyproject.toml's report.exclude_also (:120-121)
+            # matches only a bare `if sys\.platform == .win32.:` line, so
+            # merging the conditions would pull this out of the coverage
+            # exclusion and turn it into an uncoverable POSIX branch, dropping
+            # the 100% floor. The lint fix and the coverage floor conflict
+            # here, and the floor wins.
             if sys.platform == "win32":
                 msg = "use_poll is not supported on Windows"
                 raise ExceptionPexpect(msg)
