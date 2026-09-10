@@ -23,11 +23,19 @@ _TESTS_ROOT = _REPO_ROOT / "tests"
 _PYTHON_VERSIONS = (_REPO_ROOT / ".python-versions").read_text(encoding="utf-8").split()
 
 # The coverage floor for a Windows run, which cannot be the 100% in
-# pyproject.toml because it cannot run the whole suite: pexpect's pty API does
-# not exist there, and tests/conftest.py drops the two thirds of the suite that
-# drives it. What is left reaches this, so the floor still catches a Windows
-# regression -- it just has to be re-tuned whenever a module moves across that
-# POSIX/Windows line, which is a thing a reviewer can see in the same diff.
+# pyproject.toml because it cannot run the whole suite: tests/integration and
+# the four modules that drive POSIX programs skip themselves there, and
+# interact() cannot run at all. What is left reaches this, so the floor still
+# catches a Windows regression -- it just has to be re-tuned whenever a module
+# moves across that line, which is a thing a reviewer can see in the same diff.
+#
+# 46 is stale. It was measured before pexpect.spawn ran on Windows at all, when
+# nearly the whole suite dropped out at collection time (see tests/conftest.py
+# and tests/test_unsupported.py's git history) rather than the handful of
+# modules and individual tests that skip themselves now. Far more of the suite
+# runs on Windows today, so this floor no longer catches much -- it must be
+# raised to the figure the first Windows CI run of this change reports, which
+# `collate_coverage` prints before it checks the floor.
 _WINDOWS_COVERAGE_FLOOR = 46
 
 
@@ -47,16 +55,28 @@ def lint(session: nox.Session) -> None:
     _install_deps(session)
     session.run("ruff", "format", "--check", _REPO_ROOT)
     session.run("ruff", "check", _REPO_ROOT)
-    # One report per interpreter. The five lint sessions would otherwise take turns
-    # overwriting a single reports/mypy.xml, which CI publishes as an artifact and
-    # would then publish only the last of.
-    session.run(
-        "mypy",
-        "--junit-xml",
-        f"reports/mypy-{session.python}.xml",
-        _SRC_ROOT,
-        _TESTS_ROOT,
-    )
+    # Both platforms, because the library carries live code for both: the
+    # process backend behind pexpect._ptyproc is ptyprocess on POSIX and
+    # pywinpty on Windows, and whichever platform mypy assumes, the other one's
+    # branch drops out of the analysis.
+    #
+    # The win32 pass covers src/ only. The suite's POSIX-only modules reach for
+    # os.fork, signal.SIGHUP and signal.SIGKILL at the top level of a function,
+    # guarded by a pytest skipif that mypy cannot read, so a win32 pass over
+    # tests/ would report a few dozen attr-defined errors about tests that
+    # never run there. What the second pass is for is the library's Windows
+    # code, and src/ is where all of it lives.
+    #
+    # One report per interpreter per platform -- the sessions would otherwise
+    # take turns overwriting one reports/mypy.xml, which CI publishes.
+    for platform, targets in (("linux", (_SRC_ROOT, _TESTS_ROOT)), ("win32", (_SRC_ROOT,))):
+        session.run(
+            "mypy",
+            f"--platform={platform}",
+            "--junit-xml",
+            f"reports/mypy-{session.python}-{platform}.xml",
+            *targets,
+        )
 
 
 @nox.session

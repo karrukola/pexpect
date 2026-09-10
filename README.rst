@@ -19,9 +19,11 @@ automated software testing. Pexpect is in the spirit of Don Libes' Expect, but
 Pexpect is pure Python.
 
 The main features of Pexpect require the pty module in the Python standard
-library, which is only available on Unix-like systems. Some features—waiting
-for patterns from file descriptors or subprocesses—are also available on
-Windows.
+library, which is only available on Unix-like systems. ``pexpect.spawn`` also
+works on Windows 10 and 11, through ConPTY by way of ``pywinpty``. There,
+``interact()`` and the terminal-echo calls (``getecho``, ``setecho``,
+``waitnoecho``) raise ``ExceptionPexpect`` instead of working, and
+``PopenSpawn`` remains available for a child that needs no pty.
 
 If you want to work with the development version of the source code then please
 read the DEVELOPERS.rst document in the root of the source code tree.

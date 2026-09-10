@@ -8,12 +8,22 @@ Unreleased
 ``````````
 
 Fixes from a code review pass over the whole library, and from a later pass
-that made the test suite fail on any warning it raises. Each is recorded in
-``docs/issues.md`` by the number given here, with the reproduction it was
-filed against.
+that made the test suite fail on any warning it raises. Each of those is
+recorded in ``docs/issues.md`` by the number given here, with the reproduction
+it was filed against. Windows support, added in a separate pass, carries no
+such number.
 
 Behaviour changes worth reading before upgrading:
 
+* ``pexpect.spawn``, ``pexpect.spawnu``, ``pexpect.run`` and ``pexpect.runu``
+  now work on Windows 10 and 11, through ConPTY by way of the new
+  ``pywinpty`` dependency -- ``pip install pexpect`` brings it in
+  automatically there, the way it brings in ``ptyprocess`` on POSIX.
+  ``interact()``, ``getecho()``, ``setecho()`` and ``waitnoecho()`` raise
+  ``ExceptionPexpect`` on Windows instead of running, and so do ``kill()`` for
+  a signal ConPTY cannot deliver and the ``preexec_fn``, ``ignore_sighup``,
+  ``echo=False`` and ``use_poll=True`` constructor arguments. See
+  :ref:`windows` for why each one does.
 * ``pxssh.login()`` now quotes the server, username, ``ssh_key`` path and
   ``ssh_config`` path it interpolates into the ssh command line (41). An
   unquoted value with a space in it silently became two arguments, and with

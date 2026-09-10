@@ -256,15 +256,12 @@ filterwarnings = [
 
 [tool.mypy]
 check_untyped_defs = true
-# pexpect is a POSIX library: `pty`, `termios`, `tty` and `fcntl` exist nowhere
-# else, and neither do `pexpect.spawn` and `pexpect.run`, which `__init__`
-# exports behind a `sys.platform` check. mypy analyses for the platform it is
-# running on, so on a Windows checkout all of that drops out of the stubs and
-# the run ends in several hundred attr-defined errors about code that never
-# executes there. Pinning the platform makes every machine reach the same
-# verdict, and the verdict worth reaching is the POSIX one.
-# ref: https://mypy.readthedocs.io/en/stable/command_line.html#cmdoption-mypy-platform
-platform = "linux"
+# No `platform` pin. It used to be "linux", because `pty`, `termios`, `tty` and
+# `fcntl` exist nowhere else and neither did pexpect.spawn, so a Windows
+# checkout ended in several hundred attr-defined errors about code that never
+# ran there. Both platforms now carry live code, so both are checked -- the
+# lint session runs mypy twice, once per platform, and pinning either one here
+# would silence the other.
 
 
 # ptyprocess ships no py.typed marker. Following its untyped source keeps

@@ -68,31 +68,54 @@ bring them in; on Debian or Ubuntu::
 Running it on Windows
 ---------------------
 
-pexpect is a POSIX library -- its central class, ``spawn``, is a pty, and
-Windows has none -- but ``nox`` with no arguments passes there, on a subset.
+pexpect's central class, ``spawn``, drives a child through a pty, and Windows
+has none of its own -- but it has ConPTY, and ``src/pexpect/_winpty.py`` wraps
+pywinpty's version of one behind the same ``read_bytes``/``write_bytes`` seam
+``src/pexpect/_ptyproc.py`` uses for ptyprocess on POSIX. ``nox`` with no
+arguments passes on both platforms as a result, though ``test`` covers less of
+the suite on Windows than on POSIX.
 
-``lint`` is not a subset of anything: ``[tool.mypy] platform = "linux"`` in
-``pyproject.toml`` pins the platform mypy analyses for, so every machine
-reaches the same verdict instead of a Windows checkout reporting several
-hundred errors about POSIX modules its stubs cannot see.
+``lint`` runs mypy twice there, once per platform: ``[tool.mypy]`` in
+``pyproject.toml`` carries no ``platform`` pin, because both platforms now have
+live code to check and pinning either one would silence the other's errors.
+``noxfile.py``'s ``lint`` session runs the win32 pass over ``src/`` only --
+its comment there says why ``tests/`` is not part of it.
 
-``test`` runs 92 of the suite's 391 tests, 11 of which skip.
-``tests/conftest.py`` holds the list of modules it drops, with a reason against
-each: everything that drives the pty API, which is most of the suite and all of
-``tests/integration``; ``test_socket`` and ``test_socket_fd``, which need
-``os.fork`` to carry a bound method into a subprocess; and
-``test_popen_spawn``, whose tests reach for ``cat``, ``echo``, ``sleep`` and
-signal delivery even though ``PopenSpawn`` is the class pexpect offers on
-Windows. They are dropped at collection rather than skipped test by test
-because most of them raise while being imported, and a skip mark never runs
-when the module carrying it cannot be imported. What is left exercises
-``fdspawn``, ``SocketSpawn``, the searchers, the screen emulation and the FSM.
+``test`` runs almost everything on Windows too. What does not is four modules
+and one whole directory, each skipping itself with a module-level
+``pytest.mark.skipif`` rather than disappearing from collection the way the
+old ``_POSIX_ONLY``/``collect_ignore`` pair in ``tests/conftest.py`` used to --
+a skip is counted and reported, a dropped module is invisible. ``test_socket.py``
+and ``test_socket_fd.py`` need ``os.fork`` to carry a bound method into a
+subprocess; ``test_pxssh.py`` drives an ``ssh`` binary; ``test_popen_spawn.py``
+drives ``cat``, ``echo``, ``sleep`` and ``ls``, plus ``SIGKILL``/``SIGTERM``
+delivery, even though ``PopenSpawn`` is the class pexpect offers Windows for a
+child that needs no pty. ``tests/integration`` has no module-level mark of its
+own to carry, so its ``conftest.py`` skips every test under it the same way,
+for the same reason: POSIX programs. Beyond these, individual tests elsewhere
+skip themselves on whichever platform lacks the POSIX program they need --
+``ls``, ``uname``, ``sh``, ``pwd``, ``bash`` -- the same way they always did.
 
-A subset cannot meet the 100% floor, so ``collate_coverage`` holds a Windows
-run to ``_WINDOWS_COVERAGE_FLOOR`` in ``noxfile.py`` instead. It is a real
-gate, not a formality -- a regression that drops Windows coverage fails the
-session -- and it has to be re-tuned by hand whenever a module moves across the
-POSIX/Windows line, which is a change the same diff will show.
+What runs instead of a literal ``cat``, ``echo``, ``sleep`` or ``true`` is a
+Python stand-in under ``tests/helpers/``, resolved once per platform by
+``tests/commands.py`` and run under the current interpreter; POSIX still gets
+the real program, unchanged. Fourteen modules drove one of those four commands
+before the stand-ins existed, and are converted to call through
+``tests/commands.py`` now. ``tests/test_commands.py`` also spawns each helper
+directly, so a broken stand-in fails on Linux instead of only on a Windows CI
+leg nobody here can watch.
+
+A run that skips a directory and four modules cannot meet the 100% floor
+``pyproject.toml`` sets, so ``collate_coverage`` holds a Windows run to
+``_WINDOWS_COVERAGE_FLOOR`` in ``noxfile.py`` instead. It is a real gate, not a
+formality -- a regression that drops Windows coverage fails the session -- and
+it has to be re-tuned by hand whenever a module moves across the POSIX/Windows
+line, which is a change the same diff will show. The figure there right now is
+stale: it was measured back when nearly the whole suite dropped out of
+collection on Windows, before ``pexpect.spawn`` ran there at all, so it no
+longer catches much. It wants raising to whatever the first Windows CI run of
+this change reports -- ``collate_coverage`` prints the total before it checks
+the floor.
 
 ``.gitattributes`` says ``* text=auto eol=lf``, and it earns its place here:
 the suite compares bytes it reads from ``tests/TESTDATA.txt`` and the ``.vt``

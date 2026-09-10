@@ -459,7 +459,13 @@ class spawn(SpawnBase[AnyStr]):
 
     def _spawnpty(self, args: list[str] | list[bytes], **kwargs: object) -> PtyProcess:
         """Spawn a pty and return an instance of the process backend."""
-        return PtyProcess.spawn(args, **kwargs)
+        # kwargs is typed as `object` because ptyprocess.PtyProcess.spawn, the
+        # POSIX half of PtyProcess, carries no py.typed marker and so accepts
+        # anything under --platform linux. _winpty.PtyProcess.spawn, the
+        # win32 half, is typed for real, and no **kwargs annotation narrower
+        # than a per-key TypedDict would satisfy both -- more machinery than
+        # the two-line body below is worth.
+        return PtyProcess.spawn(args, **kwargs)  # type: ignore[arg-type]
 
     def close(self, force: bool = True) -> None:  # documented positional flag
         """Close the connection with the child application.

@@ -345,7 +345,14 @@ class PopenSpawn(SpawnBase[AnyStr]):
             try:
                 self.proc.wait(timeout=self.delayafterterminate)
             except subprocess.TimeoutExpired:
-                self.kill(signal.SIGKILL)
+                # signal.SIGKILL does not exist under --platform win32's stubs,
+                # because the real module has no such attribute on Windows
+                # either -- this rung of the escalation has no Windows
+                # equivalent and is not exercised on that platform by the test
+                # suite. Fixing that is outside this task's no-behaviour-change
+                # scope; the ignore is about a pre-existing gap, not one this
+                # task introduces.
+                self.kill(signal.SIGKILL)  # type: ignore[attr-defined]
                 self.proc.wait()
 
         self.isalive()  # record exitstatus/signalstatus/terminated

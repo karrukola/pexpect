@@ -254,13 +254,27 @@ Pexpect can be used on Windows to wait for a pattern to be produced by a child
 process, using :class:`pexpect.popen_spawn.PopenSpawn`, or a file descriptor,
 using :class:`pexpect.fdpexpect.fdspawn`.
 
-:class:`pexpect.spawn` and :func:`pexpect.run` are *not* available on Windows,
-as they rely on Unix pseudoterminals (ptys). Cross platform code must not use
-these.
+:class:`pexpect.spawn` and :func:`pexpect.run` now work on Windows 10 and 11
+too, through ConPTY -- the console API Windows added to give a child process
+what a Unix pty gives one -- by way of `pywinpty
+<https://pypi.org/project/pywinpty/>`_. A handful of calls have no ConPTY
+equivalent and raise :class:`~pexpect.exceptions.ExceptionPexpect` naming
+themselves, rather than running: :meth:`~pexpect.spawn.getecho`,
+:meth:`~pexpect.spawn.setecho` and :meth:`~pexpect.spawn.waitnoecho`, because
+ConPTY keeps echo in the child's own console host, out of the parent's reach;
+:meth:`~pexpect.spawn.interact`; and :meth:`~pexpect.spawn.kill` for a signal
+ConPTY has no way to deliver. The ``preexec_fn``, ``ignore_sighup``,
+``echo=False`` and ``use_poll=True`` constructor arguments raise the same way,
+for the same underlying reason -- there is no fork to run a preexec hook in, no
+``SIGHUP`` to ignore, no echo to turn off from this side, and no
+:func:`select.poll` on this platform. ``tests/test_unsupported.py`` is the
+authority for this list: it asserts the raise on Windows and the equivalent
+working call on POSIX side by side, so the two cannot drift apart unnoticed.
 
-``PopenSpawn`` is not a direct replacement for ``spawn``. Many programs only
-offer interactive behaviour if they detect that they are running in a terminal.
-When run by ``PopenSpawn``, they may behave differently.
+``PopenSpawn`` is not a direct replacement for ``spawn``, on Windows or off it.
+Many programs only offer interactive behaviour if they detect that they are
+running in a terminal. When run by ``PopenSpawn``, which gives the child a
+pipe rather than a pty, they may behave differently.
 
 .. seealso::
 

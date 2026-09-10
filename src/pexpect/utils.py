@@ -149,9 +149,16 @@ def poll_ignore_interrupts(fds: list[int], timeout: float | None = None) -> list
     if timeout is not None:
         end_time = time.time() + timeout
 
-    poller = select.poll()
+    # select.poll and its constants do not exist under --platform win32's
+    # stubs, because the real module has none on Windows either. Both callers
+    # -- pty_spawn's use_poll and fdpexpect's read_nonblocking -- refuse
+    # use_poll=True before reaching this function on that platform, so the
+    # ignore below is about an unreachable call, not an unhandled one.
+    poller = select.poll()  # type: ignore[attr-defined]
+    # One ignore covers all four attributes mypy flags on this line.
+    events = select.POLLIN | select.POLLPRI | select.POLLHUP | select.POLLERR  # type: ignore[attr-defined]
     for fd in fds:
-        poller.register(fd, select.POLLIN | select.POLLPRI | select.POLLHUP | select.POLLERR)
+        poller.register(fd, events)
 
     while True:
         try:
