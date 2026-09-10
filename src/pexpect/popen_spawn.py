@@ -329,7 +329,8 @@ class PopenSpawn(SpawnBase[AnyStr]):
         block for five seconds, and one that never exits on stdin EOF would
         block forever. So, like :meth:`pty_spawn.spawn.close`, this
         escalates instead of only waiting: close stdin, wait, SIGTERM, wait,
-        SIGKILL, wait.
+        then the hardest kill each platform has -- SIGKILL on POSIX,
+        TerminateProcess on Windows -- wait.
         """
         if self.closed:
             return
@@ -345,14 +346,16 @@ class PopenSpawn(SpawnBase[AnyStr]):
             try:
                 self.proc.wait(timeout=self.delayafterterminate)
             except subprocess.TimeoutExpired:
-                # signal.SIGKILL does not exist under --platform win32's stubs,
-                # because the real module has no such attribute on Windows
-                # either -- this rung of the escalation has no Windows
-                # equivalent and is not exercised on that platform by the test
-                # suite. Fixing that is outside this task's no-behaviour-change
-                # scope; the ignore is about a pre-existing gap, not one this
-                # task introduces.
-                self.kill(signal.SIGKILL)  # type: ignore[attr-defined]
+                # Not self.kill(signal.SIGKILL): signal.SIGKILL does not exist
+                # on Windows, so the attribute lookup would raise while the
+                # argument was being evaluated -- before kill() is even
+                # entered, so its own win32 branch above never gets a chance
+                # to translate it. subprocess.Popen.kill() is the portable
+                # equivalent: on POSIX it is send_signal(SIGKILL), exactly
+                # what this rung sent before, so nothing changes there; on
+                # Windows it is TerminateProcess, the hardest kill that
+                # platform has.
+                self.proc.kill()
                 self.proc.wait()
 
         self.isalive()  # record exitstatus/signalstatus/terminated
