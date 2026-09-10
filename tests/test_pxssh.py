@@ -18,7 +18,13 @@ if sys.platform != "win32":
     from pexpect import pxssh
 from .pexpect_test_case import PexpectTestCase
 
-pytestmark = pytest.mark.usefixtures("fast_sleep", "lean_child_env", "killed_pty_children")
+pytestmark = [
+    pytest.mark.usefixtures("fast_sleep", "lean_child_env", "killed_pty_children"),
+    pytest.mark.skipif(
+        sys.platform == "win32",
+        reason="drives POSIX programs and an ssh binary",
+    ),
+]
 
 # Credentials the tests/fakessh/ssh stub accepts and rejects. They are fixture
 # values for a mock server, not real secrets.

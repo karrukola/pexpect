@@ -37,7 +37,15 @@ from pexpect import fdpexpect, socket_pexpect
 
 from . import pexpect_test_case
 
-pytestmark = pytest.mark.usefixtures("fast_sleep")
+pytestmark = [
+    pytest.mark.usefixtures("fast_sleep"),
+    pytest.mark.skipif(
+        sys.platform == "win32",
+        # The server is a bound method of the test case, which no spawn start
+        # method can carry, so it needs a forked subprocess.
+        reason="needs os.fork to run its socket server",
+    ),
+]
 
 if TYPE_CHECKING:
     from multiprocessing.context import DefaultContext, ForkContext

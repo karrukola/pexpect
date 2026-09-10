@@ -20,6 +20,7 @@ OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 
 from __future__ import annotations
 
+import sys
 import unittest
 from typing import TYPE_CHECKING
 
@@ -34,7 +35,15 @@ if TYPE_CHECKING:
     import socket
     from collections.abc import Callable
 
-pytestmark = pytest.mark.usefixtures("fast_sleep")
+pytestmark = [
+    pytest.mark.usefixtures("fast_sleep"),
+    pytest.mark.skipif(
+        sys.platform == "win32",
+        # The server is a bound method of the test case, which no spawn start
+        # method can carry, so it needs a forked subprocess.
+        reason="needs os.fork to run its socket server",
+    ),
+]
 
 
 class ExpectTestCase(test_socket.ExpectTestCase):

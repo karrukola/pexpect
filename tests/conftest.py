@@ -33,6 +33,12 @@ this process, because the child it times is exec'd and so escapes the coverage
 tracer the tests themselves run under. The tests that spend their time here
 rather than in a child are budgeted by the floor instead; see
 ``_BUDGET_FLOOR``.
+
+A module that cannot run on Windows says so itself, with a module-level
+``pytest.mark.skipif`` naming what it needs. Dropping such modules at
+collection was necessary while ``pexpect.spawn`` could not be imported there --
+a skip mark never runs when the module carrying it cannot be imported -- and it
+is not any more.
 """
 
 from __future__ import annotations
@@ -50,6 +56,8 @@ from pytest_time.instant_sleep import InstantSleep
 
 import pexpect
 
+from . import commands
+
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterator
 
@@ -57,12 +65,10 @@ if TYPE_CHECKING:
 # `ptyprocess` on POSIX, `pexpect._winpty` over ConPTY on Windows -- and
 # `pexpect.spawn` is exported from `__init__` on every platform. What is still
 # platform-specific is which *programs* the suite can drive: most of this
-# suite reaches for POSIX ones like `cat`, `echo` and a shell, which is why
-# most of the modules named below are dropped at collection on Windows rather
-# than skipped at runtime -- see _POSIX_ONLY.
+# suite reaches for POSIX ones like `cat`, `echo` and a shell, and the modules
+# that need one say so with their own module-level `pytest.mark.skipif`; see
+# this module's docstring.
 from pexpect import pty_spawn
-
-_ON_POSIX = sys.platform != "win32"
 
 # SIGKILL is POSIX; on Windows os.kill() with SIGTERM is TerminateProcess,
 # which is the same "cannot be caught" contract. Written as a platform `if`
@@ -135,59 +141,11 @@ _BUDGET_FLOOR = 1.0
 # be doing while another process had the CPU.
 _CALIBRATION_RUNS = 3
 
-# What to spawn to measure one child. `cat` is what most of these tests drive,
-# it is on every POSIX system, and it starts without reading a config or an
-# interpreter, so it measures the fork/exec/pty floor and not a program.
-_CALIBRATION_COMMAND = "cat"
-
-
-# The modules of this suite that cannot run on Windows, dropped at collection
-# rather than skipped test by test: most of them raise while being imported,
-# and a skip mark never runs when the module that carries it cannot be
-# imported. Three reasons, in order:
-#
-# * The pty API, driven directly or through replwrap, run or pxssh.
-#   `pexpect.pty_spawn` imports `pty`, which imports `termios`, and
-#   `pexpect.spawn` is exported from `__init__` behind the same platform check.
-#   tests/integration is all of this.
-# * `os.fork`, which `test_socket` needs to put its socket server in a
-#   subprocess -- the server is a bound method of the test case, which the
-#   spawn start method cannot carry -- and `test_socket_fd` runs that same
-#   suite over a file descriptor.
-# * The POSIX programs `test_popen_spawn` drives: `cat`, `echo`, `sleep`,
-#   `ls -l /bin`, plus SIGKILL and SIGTERM delivery. `PopenSpawn` itself is the
-#   class pexpect offers on Windows and works there; what its tests reach for
-#   does not.
-#
-# What is left covers the rest of what pexpect supports on Windows: fdspawn,
-# SocketSpawn, the searchers, the screen emulation and the FSM.
-_POSIX_ONLY = (
-    "integration",
-    "test_async.py",
-    "test_constructor.py",
-    "test_ctrl_chars.py",
-    "test_delay.py",
-    "test_dotall.py",
-    "test_env.py",
-    "test_expect.py",
-    "test_isalive.py",
-    "test_log.py",
-    "test_misc.py",
-    "test_missing_command.py",
-    "test_popen_spawn.py",
-    "test_pxssh.py",
-    "test_replwrap.py",
-    "test_repr.py",
-    "test_run.py",
-    "test_socket.py",
-    "test_socket_fd.py",
-    "test_timeout_pattern.py",
-    "test_unicode.py",
-    "test_winsize.py",
-)
-
-if not _ON_POSIX:
-    collect_ignore = list(_POSIX_ONLY)
+# What to spawn to measure one child. `commands.CAT` is what most of these
+# tests drive -- `cat` on POSIX, a Python stand-in on Windows -- and either way
+# it starts without reading a config or an interpreter of its own, so it
+# measures the fork/exec/pty floor and not a program.
+_CALIBRATION_COMMAND = commands.CAT
 
 
 class _YieldingSleep(InstantSleep):

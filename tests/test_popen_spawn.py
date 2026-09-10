@@ -39,7 +39,13 @@ from . import pexpect_test_case
 if TYPE_CHECKING:
     from collections.abc import Callable
 
-pytestmark = pytest.mark.usefixtures("fast_sleep")
+pytestmark = [
+    pytest.mark.usefixtures("fast_sleep"),
+    pytest.mark.skipif(
+        sys.platform == "win32",
+        reason="drives cat, echo, sleep and ls, plus SIGKILL and SIGTERM delivery",
+    ),
+]
 
 
 class ExpectTestCase(pexpect_test_case.PexpectTestCase):

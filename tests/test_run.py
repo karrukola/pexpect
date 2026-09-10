@@ -133,6 +133,7 @@ class RunFuncTestCase(pexpect_test_case.PexpectTestCase):
         (_the_new_way, exitstatus) = self.runfunc("ls -l /najoeufhdnzkxjd", withexitstatus=True)
         assert exitstatus != 0
 
+    @pytest.mark.skipif(sys.platform == "win32", reason="needs `bash`")
     def test_run_event_as_string(self) -> None:
         """An event response may be a plain string to send to the child."""
         events: _Events = [
@@ -149,6 +150,7 @@ class RunFuncTestCase(pexpect_test_case.PexpectTestCase):
         )
         assert exitstatus == 0
 
+    @pytest.mark.skipif(sys.platform == "win32", reason="needs `bash`")
     def test_run_event_as_function(self) -> None:
         """An event response may be a module-level function."""
         events: _Events = [("GO:", function_events_callback)]
@@ -158,6 +160,7 @@ class RunFuncTestCase(pexpect_test_case.PexpectTestCase):
         )
         assert exitstatus == 0
 
+    @pytest.mark.skipif(sys.platform == "win32", reason="needs `bash`")
     def test_run_event_as_method(self) -> None:
         """An event response may be a bound method."""
         events: _Events = [("GO:", self._method_events_callback)]
@@ -167,6 +170,7 @@ class RunFuncTestCase(pexpect_test_case.PexpectTestCase):
         )
         assert exitstatus == 0
 
+    @pytest.mark.skipif(sys.platform == "win32", reason="needs `bash`")
     def test_run_event_typeerror(self) -> None:
         """An event response that is neither string nor callable raises TypeError."""
         events = [("GO:", -1)]

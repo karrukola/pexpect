@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import pathlib
+import sys
 
 import coverage
 import pytest
@@ -21,10 +22,23 @@ _INVOCATION_DIR = pathlib.Path.cwd()
 
 
 def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
-    """Lift the suite's per-test time budget for every test in this directory."""
+    """Lift the suite's per-test time budget for every test in this directory.
+
+    Every module here also drives a POSIX program -- bash, zsh, ssh, man, ls --
+    or the pty behaviour that only a POSIX pty has, so the whole directory is
+    skipped on Windows too. A directory has no module-level ``pytestmark``, so
+    both marks are added per item instead, and this is the one place to do it:
+    two definitions of ``pytest_collection_modifyitems`` in one module would
+    leave whichever pytest reads second to silently win.
+    """
+    skip_windows = None
+    if sys.platform == "win32":
+        skip_windows = pytest.mark.skip(reason="integration tests drive POSIX programs")
     for item in items:
         if _HERE in item.path.parents:
             item.add_marker(pytest.mark.timeout(_TIMEOUT))
+            if skip_windows is not None:
+                item.add_marker(skip_windows)
 
 
 @pytest.fixture

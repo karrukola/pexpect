@@ -9,6 +9,7 @@ What is left is the part of replwrap that runs before any child does.
 """
 
 import os
+import sys
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -17,6 +18,11 @@ import pytest
 
 import pexpect
 from pexpect import replwrap
+
+pytestmark = pytest.mark.skipif(
+    sys.platform == "win32",
+    reason="drives bash and zsh",
+)
 
 
 class REPLWrapNoShellTestCase(unittest.TestCase):
