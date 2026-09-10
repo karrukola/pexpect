@@ -319,6 +319,15 @@ class SpawnBase(Generic[AnyStr]):
     # to be a string/bytes object)
     buffer = property(_get_buffer, _set_buffer)
 
+    def _read_fd(self, size: int) -> bytes:
+        """Read at most *size* bytes from ``child_fd``.
+
+        A plain descriptor read, which is what fdspawn and SocketSpawn want.
+        pty_spawn.spawn overrides it to go through its process backend, whose
+        descriptor is not always one os.read() accepts -- see pexpect._ptyproc.
+        """
+        return os.read(self.child_fd, size)
+
     def read_nonblocking(
         self,
         size: int = 1,
@@ -333,7 +342,7 @@ class SpawnBase(Generic[AnyStr]):
         The timeout parameter is ignored.
         """
         try:
-            s = os.read(self.child_fd, size)
+            s = self._read_fd(size)
         except OSError as err:
             if err.args[0] == errno.EIO:
                 # Linux-style EOF

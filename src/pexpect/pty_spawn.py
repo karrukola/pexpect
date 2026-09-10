@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import errno
 import os
-import pty
 import signal
 import sys
 import termios
@@ -13,9 +12,7 @@ import tty
 from contextlib import contextmanager
 from typing import IO, TYPE_CHECKING, Any, AnyStr, cast, overload
 
-import ptyprocess
-from ptyprocess.ptyprocess import use_native_pty_fork
-
+from ._ptyproc import PtyProcess, PtyProcessError, use_native_pty_fork
 from .exceptions import EOF, TIMEOUT, ExceptionPexpect
 from .spawnbase import SpawnBase
 from .utils import poll_ignore_interrupts, select_ignore_interrupts, split_command_line, which
@@ -36,7 +33,7 @@ def _wrap_ptyprocess_err() -> Iterator[None]:
     """Turn ptyprocess errors into our own ExceptionPexpect errors."""
     try:
         yield
-    except ptyprocess.PtyProcessError as e:
+    except PtyProcessError as e:
         raise ExceptionPexpect(*e.args) from e
 
 
@@ -49,9 +46,9 @@ class spawn(SpawnBase[AnyStr]):
     # This is purely informational now - changing it has no effect
     use_native_pty_fork = use_native_pty_fork
 
-    # Bound by _spawn(); declared here because ptyprocess carries no py.typed
+    # Bound by _spawn(); declared here because the backend carries no py.typed
     # marker, so the type of the _spawnpty() result is not inferrable.
-    ptyproc: ptyprocess.PtyProcess
+    ptyproc: PtyProcess
 
     # Both are resolved by _resolve_command() and stay None for the
     # ``command=None`` factory form. _spawn() re-encodes the argument list when
@@ -269,9 +266,12 @@ class spawn(SpawnBase[AnyStr]):
             encoding=encoding,
             codec_errors=codec_errors,
         )
-        self.STDIN_FILENO = pty.STDIN_FILENO
-        self.STDOUT_FILENO = pty.STDOUT_FILENO
-        self.STDERR_FILENO = pty.STDERR_FILENO
+        # 0, 1 and 2, which is what pty.STDIN_FILENO and friends are defined
+        # as. Named as constants rather than imported because `pty` is POSIX
+        # only and this class now runs on Windows too.
+        self.STDIN_FILENO = 0
+        self.STDOUT_FILENO = 1
+        self.STDERR_FILENO = 2
         self.str_last_chars = 100
         self.cwd = cwd
         self.env = env
@@ -443,9 +443,9 @@ class spawn(SpawnBase[AnyStr]):
         self.terminated = False
         self.closed = False
 
-    def _spawnpty(self, args: list[str] | list[bytes], **kwargs: object) -> ptyprocess.PtyProcess:
-        """Spawn a pty and return an instance of PtyProcess."""
-        return ptyprocess.PtyProcess.spawn(args, **kwargs)
+    def _spawnpty(self, args: list[str] | list[bytes], **kwargs: object) -> PtyProcess:
+        """Spawn a pty and return an instance of the process backend."""
+        return PtyProcess.spawn(args, **kwargs)
 
     def close(self, force: bool = True) -> None:  # documented positional flag
         """Close the connection with the child application.
@@ -473,7 +473,7 @@ class spawn(SpawnBase[AnyStr]):
         methods such as setecho(), setwinsize(), getwinsize() may raise an
         IOError.
         """
-        return os.isatty(self.child_fd)
+        return self.ptyproc.isatty()
 
     def waitnoecho(self, timeout: float | None = -1) -> bool | None:
         """Wait until the terminal ECHO flag is set False.
@@ -563,6 +563,10 @@ class spawn(SpawnBase[AnyStr]):
         if self.use_poll:
             return bool(poll_ignore_interrupts([self.child_fd], timeout))
         return bool(select_ignore_interrupts([self.child_fd], [], [], timeout)[0])
+
+    def _read_fd(self, size: int) -> bytes:
+        """Read from the pty through the process backend rather than os.read()."""
+        return self.ptyproc.read_bytes(size)
 
     def _base_read_nonblocking(self, size: int) -> AnyStr:
         """Read one chunk through :class:`SpawnBase`, in this instance's string mode.
@@ -726,7 +730,7 @@ class spawn(SpawnBase[AnyStr]):
         # _coerce_send_string() has just brought s into this instance's string
         # mode, which is what the encoder takes.
         b = self._encoder.encode(cast("AnyStr", s), final=False)
-        return os.write(self.child_fd, b)
+        return self.ptyproc.write_bytes(b)
 
     def sendline(self, s: str | bytes = "") -> int:
         """Send string ``s`` to the child process with ``os.linesep`` appended.
