@@ -186,7 +186,12 @@ What it has to supply on top of pywinpty:
 * `terminate(force=False)` returns a `bool`; pywinpty's falls off the end
   and returns `None` when the child survives a non-forced terminate.
 * `read_bytes` reads `fileobj.recv(size)`, for the reasons above, and
-  raises `EOF` on a zero-length read after setting `flag_eof`.
+  returns `b""` at end of file. Nothing more is needed: the existing
+  BSD-style branch in `SpawnBase.read_nonblocking` already turns an empty
+  read into `flag_eof` plus `EOF`, and its `OSError`/`EIO` branch is the
+  Linux-style equivalent. So the seam is `self._read_fd(size)` in place
+  of `os.read(self.child_fd, size)`, with the two EOF branches left where
+  they are.
 
 ### `spawn`'s Windows branches
 
