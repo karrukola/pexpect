@@ -142,9 +142,13 @@ _BUDGET_FLOOR = 1.0
 _CALIBRATION_RUNS = 3
 
 # What to spawn to measure one child. `commands.CAT` is what most of these
-# tests drive -- `cat` on POSIX, a Python stand-in on Windows -- and either way
-# it starts without reading a config or an interpreter of its own, so it
-# measures the fork/exec/pty floor and not a program.
+# tests drive, and what it resolves to differs by platform. On POSIX it is
+# `cat`, which starts without reading a config of its own, so the measurement
+# is the fork/exec/pty floor and not a program. On Windows it is a Python
+# stand-in, so the figure this calibrates also includes starting an
+# interpreter, and comes out looser than the POSIX one as a result. A looser
+# budget still does the one job asked of it here -- catching a hang, not
+# pacing a fast test -- so the slack costs nothing that matters.
 _CALIBRATION_COMMAND = commands.CAT
 
 
