@@ -84,7 +84,7 @@ bytes end to end and decodes with the caller's `encoding` and
 `codec_errors`; and it re-reads one byte at a time until its buffer
 decodes as UTF-8:
 
-```python
+```text
 err = True
 while err and data:
     try:
