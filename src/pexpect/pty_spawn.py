@@ -6,9 +6,7 @@ import errno
 import os
 import signal
 import sys
-import termios
 import time
-import tty
 from contextlib import contextmanager
 from typing import IO, TYPE_CHECKING, Any, AnyStr, cast, overload
 
@@ -266,6 +264,10 @@ class spawn(SpawnBase[AnyStr]):
             encoding=encoding,
             codec_errors=codec_errors,
         )
+        if use_poll:
+            if sys.platform == "win32":
+                msg = "use_poll is not supported on Windows"
+                raise ExceptionPexpect(msg)
         # 0, 1 and 2, which is what pty.STDIN_FILENO and friends are defined
         # as. Named as constants rather than imported because `pty` is POSIX
         # only and this class now runs on Windows too.
@@ -375,9 +377,13 @@ class spawn(SpawnBase[AnyStr]):
         preexec_fn: Callable[[], None] | None,
         dimensions: tuple[int, int] | None,
     ) -> dict[str, Any]:
-        """Build the keyword arguments handed to ptyprocess.PtyProcess.spawn()."""
+        """Build the keyword arguments handed to the process backend's spawn()."""
         kwargs: dict[str, Any] = {"echo": self.echo, "preexec_fn": preexec_fn}
         if self.ignore_sighup:
+            if sys.platform == "win32":
+                # No SIGHUP to ignore, and no fork to ignore it in.
+                msg = "ignore_sighup is not supported on Windows"
+                raise ExceptionPexpect(msg)
 
             def preexec_wrapper() -> None:
                 """Set SIGHUP to be ignored, then call the real preexec_fn."""
@@ -435,7 +441,8 @@ class spawn(SpawnBase[AnyStr]):
             ]
             self.args = resolved_args
 
-        self.ptyproc = self._spawnpty(resolved_args, env=self.env, cwd=self.cwd, **kwargs)
+        with _wrap_ptyprocess_err():
+            self.ptyproc = self._spawnpty(resolved_args, env=self.env, cwd=self.cwd, **kwargs)
 
         self.pid = self.ptyproc.pid
         self.child_fd = self.ptyproc.fd
@@ -492,6 +499,10 @@ class spawn(SpawnBase[AnyStr]):
         If timeout==-1 then this method will use the value in self.timeout.
         If timeout==None then this method to block until ECHO flag is False.
         """
+        if sys.platform == "win32":
+            # It waits for a termios flag to clear, and there is no such flag.
+            msg = "waitnoecho() is not supported on Windows"
+            raise ExceptionPexpect(msg)
         if timeout == -1:
             timeout = self.timeout
         if timeout is not None:
@@ -521,7 +532,8 @@ class spawn(SpawnBase[AnyStr]):
 
         Not supported on platforms where ``isatty()`` returns False.
         """
-        return self.ptyproc.getecho()
+        with _wrap_ptyprocess_err():
+            return self.ptyproc.getecho()
 
     def setecho(self, state: bool) -> None:  # documented positional flag
         """Set the terminal echo mode on or off.
@@ -556,11 +568,17 @@ class spawn(SpawnBase[AnyStr]):
 
         Not supported on platforms where ``isatty()`` returns False.
         """
-        return self.ptyproc.setecho(state)
+        with _wrap_ptyprocess_err():
+            return self.ptyproc.setecho(state)
 
     def _ready(self, timeout: float | None) -> bool:
         """Return True when the child fd has data available within *timeout*."""
         if self.use_poll:
+            if sys.platform == "win32":
+                # select.poll() does not exist there. select() does, and it
+                # accepts the socket descriptor this backend reads through.
+                msg = "use_poll is not supported on Windows"
+                raise ExceptionPexpect(msg)
             return bool(poll_ignore_interrupts([self.child_fd], timeout))
         return bool(select_ignore_interrupts([self.child_fd], [], [], timeout)[0])
 
@@ -730,7 +748,12 @@ class spawn(SpawnBase[AnyStr]):
         # _coerce_send_string() has just brought s into this instance's string
         # mode, which is what the encoder takes.
         b = self._encoder.encode(cast("AnyStr", s), final=False)
-        return self.ptyproc.write_bytes(b)
+        # write_bytes() raises PtyProcessError for a closed pty or, on the
+        # Windows backend, a payload that is not valid UTF-8; wrapped so
+        # send() -- the commonest call in the library, and what writelines()
+        # and sendline() both funnel through -- always raises our own type.
+        with _wrap_ptyprocess_err():
+            return self.ptyproc.write_bytes(b)
 
     def sendline(self, s: str | bytes = "") -> int:
         """Send string ``s`` to the child process with ``os.linesep`` appended.
@@ -886,10 +909,10 @@ class spawn(SpawnBase[AnyStr]):
         In keeping with UNIX tradition it has a misleading name. It does not
         necessarily kill the child unless you send the right signal.
         """
-        # Same as os.kill, but the pid is given for you.
+        # The pid is the backend's; it is given for you, as os.kill's is not.
         if self.isalive():
-            # isalive() has just spoken to the child, so there is a pid.
-            os.kill(cast("int", self.pid), sig)
+            with _wrap_ptyprocess_err():
+                self.ptyproc.kill(sig)
 
     def getwinsize(self) -> tuple[int, int]:
         """Return the terminal window size of the child tty.
@@ -915,6 +938,8 @@ class spawn(SpawnBase[AnyStr]):
         output_filter: Callable[[bytes], bytes] | None = None,
     ) -> None:
         """Give control of the child process to the interactive user.
+
+        Not supported on Windows, where it raises :class:`ExceptionPexpect`.
 
         Keystrokes are sent to the child process, and the stdout and stderr
         output of the child process is printed. This simply echos the child
@@ -958,6 +983,15 @@ class spawn(SpawnBase[AnyStr]):
             signal.signal(signal.SIGWINCH, sigwinch_passthrough)
             p.interact()
         """
+        if sys.platform == "win32":
+            # Handing the terminal to a human needs raw-mode console input,
+            # which is termios and tty here and neither on Windows. Everything
+            # a script does -- expect, send, read, close -- works there.
+            msg = "interact() is not supported on Windows"
+            raise ExceptionPexpect(msg)
+        import termios  # noqa: PLC0415 -- POSIX-only, and this method is the only user
+        import tty  # noqa: PLC0415 -- POSIX-only, and this method is the only user
+
         # Flush the buffer.
         self.write_to_stdout(self.buffer)
         self.stdout.flush()
