@@ -70,18 +70,11 @@ PEXPECT LICENSE
 
 """
 
-import sys
-
 from .exceptions import EOF, TIMEOUT, ExceptionPexpect
 from .expect import Expecter, searcher_re, searcher_string
+from .pty_spawn import spawn, spawnu
+from .run import run, runu
 from .utils import is_executable_file, split_command_line, which
-
-# Python 2 is no longer supported; this flag survives only because
-# `tests/test_run.py` still reads it. Remove both together.
-if sys.platform != "win32":  # pragma: no branch
-    # On Unix, these are available at the top level for backwards compatibility
-    from .pty_spawn import spawn, spawnu
-    from .run import run, runu
 
 __version__ = "4.9.0"
 __revision__ = ""
