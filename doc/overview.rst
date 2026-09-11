@@ -278,8 +278,9 @@ bytes mode for anything a terminal would normally carry, this never comes up.
 raise on Windows and the equivalent working call on POSIX side by side, so the
 two cannot drift apart unnoticed.
 
-Two things behave differently rather than raising, and both are worth knowing
-before relying on them.
+Three more things are worth knowing before relying on them. The first two
+behave differently on Windows rather than raising; the third raises on every
+path there is into it.
 
 :meth:`~pexpect.spawn.read` is not byte-exact in bytes mode. pywinpty pumps
 the child's output through a reader thread that decodes it as UTF-8 and

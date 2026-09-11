@@ -586,16 +586,24 @@ class spawn(SpawnBase[AnyStr]):
 
     def _ready(self, timeout: float | None) -> bool:
         """Return True when the child fd has data available within *timeout*."""
-        if self.ptyproc.pending():
-            # Output the backend holds but the descriptor no longer shows, and
-            # so as ready as anything select() could report. The Windows
-            # backend reads the socket in chunks larger than the caller's size
-            # -- it has to, to recognise pywinpty's ten-byte sentinel -- so a
-            # read_nonblocking(size=1) leaves 1023 bytes buffered here and a
-            # drained socket behind it; without this the next call would wait
-            # out its whole timeout for data it already has. Always False on
-            # POSIX, where read_bytes() is a plain descriptor read.
-            return True
+        # Wrapped like every other backend call here: pending() is buffer
+        # arithmetic on POSIX but does real I/O on Windows -- it selects on the
+        # socket to decide whether a withheld sentinel prefix can still be
+        # completed -- and the backend reports a failed select() as
+        # PtyProcessError, which would otherwise leave read_nonblocking() as a
+        # type pexpect owns and callers do not catch.
+        with _wrap_ptyprocess_err():
+            if self.ptyproc.pending():
+                # Output the backend holds but the descriptor no longer shows,
+                # and so as ready as anything select() could report. The
+                # Windows backend reads the socket in chunks larger than the
+                # caller's size -- it has to, to recognise pywinpty's ten-byte
+                # sentinel -- so a read_nonblocking(size=1) leaves 1023 bytes
+                # buffered here and a drained socket behind it; without this
+                # the next call would wait out its whole timeout for data it
+                # already has. Always False on POSIX, where read_bytes() is a
+                # plain descriptor read.
+                return True
         if self.use_poll:
             if sys.platform == "win32":
                 # select.poll() does not exist there. select() does, and it
