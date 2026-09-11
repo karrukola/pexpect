@@ -45,6 +45,31 @@ if TYPE_CHECKING:
 
 pytestmark = pytest.mark.usefixtures("fast_sleep", "killed_pty_children")
 
+# spawn(echo=False), setecho() and waitnoecho() all raise ExceptionPexpect on
+# Windows, because ConPTY keeps echo in the child's own console host where the
+# parent cannot reach it. Every test that turns echo off, through the
+# constructor or through the method, carries this rather than a weakened
+# assertion; see tests/test_unsupported.py for the refusal itself.
+_NEEDS_ECHO_CONTROL = pytest.mark.skipif(
+    sys.platform == "win32",
+    reason="needs echo control: spawn(echo=False), setecho() and waitnoecho() are refused",
+)
+
+# select.poll() does not exist on Windows, so the constructor refuses
+# use_poll=True there; select() does exist and is what that platform uses.
+_NEEDS_POLL = pytest.mark.skipif(
+    sys.platform == "win32",
+    reason="needs select.poll(): spawn(use_poll=True) is refused",
+)
+
+# There is no SIGHUP to ignore and no fork to ignore it in, so the constructor
+# refuses ignore_sighup=True; signal.SIGHUP does not exist there either, so
+# these tests would fail while collecting their own arguments.
+_NEEDS_SIGHUP = pytest.mark.skipif(
+    sys.platform == "win32",
+    reason="needs SIGHUP: spawn(ignore_sighup=True) is refused",
+)
+
 # the program cat(1) may display ^D\x08\x08 when \x04 (EOF, Ctrl-D) is sent
 _CAT_EOF = b"^D\x08\x08"
 
@@ -74,6 +99,7 @@ class TestCaseMisc(pexpect_test_case.PexpectTestCase):
             raise unittest.SkipTest(msg)
         assert child.isatty()
 
+    @_NEEDS_POLL
     def test_isatty_poll(self) -> None:
         """Test isatty() is True after spawning process on most platforms."""
         child = pexpect.spawn(commands.CAT, use_poll=True)
@@ -95,6 +121,7 @@ class TestCaseMisc(pexpect_test_case.PexpectTestCase):
         remaining = child.read().replace(_CAT_EOF, b"")
         assert remaining == b"abc\r\n"
 
+    @_NEEDS_POLL
     def test_read_poll(self) -> None:
         """Test spawn.read by calls of various size."""
         child = pexpect.spawn(commands.CAT, use_poll=True)
@@ -108,6 +135,7 @@ class TestCaseMisc(pexpect_test_case.PexpectTestCase):
         remaining = child.read().replace(_CAT_EOF, b"")
         assert remaining == b"abc\r\n"
 
+    @_NEEDS_POLL
     def test_read_poll_timeout(self) -> None:
         """Test use_poll properly times out."""
         child = pexpect.spawn(commands.sleep(5), use_poll=True)
@@ -127,6 +155,7 @@ class TestCaseMisc(pexpect_test_case.PexpectTestCase):
         # exercise,
         assert child.readline() == b"alpha beta" + child.crlf
 
+    @_NEEDS_ECHO_CONTROL
     def test_readline(self) -> None:
         """Test spawn.readline()."""
         # when argument 0 is sent, nothing is returned.
@@ -146,6 +175,7 @@ class TestCaseMisc(pexpect_test_case.PexpectTestCase):
         assert not child.isalive()
         assert child.exitstatus == 0
 
+    @_NEEDS_ECHO_CONTROL
     def test_iter(self) -> None:
         """Iterating over lines of spawn.__iter__()."""
         child = pexpect.spawn(commands.CAT, echo=False)
@@ -159,6 +189,7 @@ class TestCaseMisc(pexpect_test_case.PexpectTestCase):
         page = page.replace(_CAT_EOF, b"")
         assert page == b"abc\r\n123\r\n"
 
+    @_NEEDS_ECHO_CONTROL
     def test_readlines(self) -> None:
         """Reading all lines of spawn.readlines()."""
         child = pexpect.spawn(commands.CAT, echo=False)
@@ -171,6 +202,7 @@ class TestCaseMisc(pexpect_test_case.PexpectTestCase):
         assert not child.isalive()
         assert child.exitstatus == 0
 
+    @_NEEDS_ECHO_CONTROL
     def test_write(self) -> None:
         """Write a character and return it in return."""
         child = pexpect.spawn(commands.CAT, echo=False)
@@ -380,6 +412,7 @@ class TestCaseMisc(pexpect_test_case.PexpectTestCase):
         with pytest.raises(pexpect.ExceptionPexpect, match="command member must not be None"):
             child._spawn(commands.CAT)
 
+    @_NEEDS_SIGHUP
     def test_ignore_sighup_wraps_the_preexec_function(self) -> None:
         """Ignore SIGHUP in the child before running the caller's preexec_fn.
 
@@ -405,6 +438,7 @@ class TestCaseMisc(pexpect_test_case.PexpectTestCase):
 
         assert called == [signal.SIG_IGN]
 
+    @_NEEDS_SIGHUP
     def test_ignore_sighup_without_a_preexec_function(self) -> None:
         """Ignore SIGHUP in the child when there is no preexec_fn to call.
 
@@ -441,6 +475,7 @@ class TestCaseMisc(pexpect_test_case.PexpectTestCase):
         ):
             assert child.read_nonblocking(size=5) == b"alpha"
 
+    @_NEEDS_ECHO_CONTROL
     def test_waitnoecho_without_a_timeout(self) -> None:
         """Wait for echo to be switched off with no deadline of its own.
 
@@ -598,6 +633,7 @@ class TestCaseMisc(pexpect_test_case.PexpectTestCase):
         """Check searcher_re(..).__str__() that includes TIMEOUT."""
         self._test_searcher_as(pexpect.searcher_re, plus=pexpect.TIMEOUT)
 
+    @_NEEDS_ECHO_CONTROL
     def test_nonnative_pty_fork(self) -> None:
         """Test forced self.__fork_pty() and __pty_make_controlling_tty."""
 

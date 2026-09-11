@@ -18,6 +18,7 @@ OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 
 """
 
+import sys
 import unittest
 
 import pytest
@@ -26,7 +27,18 @@ import pexpect
 
 from . import pexpect_test_case
 
-pytestmark = pytest.mark.usefixtures("fast_sleep", "killed_pty_children")
+# Every test here drives tests/sigwinch_report.py, which imports fcntl and
+# termios at module level and installs a SIGWINCH handler. None of the three
+# exists on Windows, so the child dies while importing and there is nothing
+# left for a per-test mark to be about. What the window size does under ConPTY
+# is a question for a Windows machine and a helper written for one.
+pytestmark = [
+    pytest.mark.usefixtures("fast_sleep", "killed_pty_children"),
+    pytest.mark.skipif(
+        sys.platform == "win32",
+        reason="sigwinch_report.py needs fcntl, termios and SIGWINCH",
+    ),
+]
 
 
 class TestCaseWinsize(pexpect_test_case.PexpectTestCase):

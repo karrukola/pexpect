@@ -32,7 +32,18 @@ if sys.platform != "win32":
 
     ptyprocess._make_eof_intr()
 
-pytestmark = pytest.mark.usefixtures("fast_sleep", "killed_pty_children")
+# Every test here goes through spawn_getch(), which spawns tests/getch.py with
+# echo=False: the helper imports termios and tty, and echo=False is refused on
+# Windows because ConPTY keeps echo in the child's own console host. Both
+# halves would have to be rewritten for a console before any of this could run
+# there, so the module skips itself rather than each of its tests.
+pytestmark = [
+    pytest.mark.usefixtures("fast_sleep", "killed_pty_children"),
+    pytest.mark.skipif(
+        sys.platform == "win32",
+        reason="getch.py needs termios and tty, and spawn(echo=False) is refused",
+    ),
+]
 
 
 def byte(i: int) -> bytes:

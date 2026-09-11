@@ -60,15 +60,20 @@ class IsAliveTestCase(pexpect_test_case.PexpectTestCase):
         assert p.terminated
         assert not p.isalive()
 
-    def test_signal_wait(self) -> str | None:
+    # Returning "SKIP" was how this said so before; a test that returns
+    # anything but None is an error under this suite's settings rather than a
+    # pass, and on Windows the assertion below could not hold anyway -- a
+    # process there never exits by signal, so signalstatus is always None.
+    @pytest.mark.skipif(
+        not hasattr(signal, "SIGALRM"),
+        reason="needs signal.SIGALRM, which alarm_die.py raises on itself",
+    )
+    def test_signal_wait(self) -> None:
         """Test calling wait with a process terminated by a signal."""
-        if not hasattr(signal, "SIGALRM"):
-            return "SKIP"
         p = pexpect.spawn(self.PYTHONBIN, ["alarm_die.py"])
         p.wait()
         assert p.exitstatus is None
         assert p.signalstatus == signal.SIGALRM
-        return None
 
     @pytest.mark.skipif(sys.platform == "win32", reason="needs the POSIX program `ls`")
     def test_expect_isalive_dead_after_normal_termination(self) -> None:

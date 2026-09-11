@@ -26,6 +26,16 @@ if TYPE_CHECKING:
     _Matcher = Callable[[list[_Pattern]], int]
 
 pytestmark = pytest.mark.usefixtures("fast_sleep", "killed_pty_children")
+
+# spawn(echo=False), setecho() and waitnoecho() all raise ExceptionPexpect on
+# Windows, because ConPTY keeps echo in the child's own console host where the
+# parent cannot reach it. Every test that turns echo off, through the
+# constructor or through the method, carries this rather than a weakened
+# assertion; see tests/test_unsupported.py for the refusal itself.
+_NEEDS_ECHO_CONTROL = pytest.mark.skipif(
+    sys.platform == "win32",
+    reason="needs echo control: spawn(echo=False), setecho() and waitnoecho() are refused",
+)
 # the program cat(1) may display ^D\x08\x08 when \x04 (EOF, Ctrl-D) is sent
 _CAT_EOF = "^D\x08\x08"
 
@@ -60,6 +70,7 @@ class UnicodeTests(pexpect_test_case.PexpectTestCase):
         p.sendeof()
         p.expect_exact(pexpect.EOF)
 
+    @_NEEDS_ECHO_CONTROL
     def test_expect_setecho_toggle(self) -> None:
         """Toggle tty echo off and then back on."""
         p = pexpect.spawnu(commands.CAT, timeout=5)
@@ -77,6 +88,7 @@ class UnicodeTests(pexpect_test_case.PexpectTestCase):
         p = pexpect.spawnu(commands.CAT, timeout=5)
         self._expect_echo(p, p.expect_exact)
 
+    @_NEEDS_ECHO_CONTROL
     def test_expect_setecho_toggle_exact(self) -> None:
         """Toggle tty echo off and back on while using expect_exact()."""
         p = pexpect.spawnu(commands.CAT, timeout=5)

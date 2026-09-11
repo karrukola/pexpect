@@ -44,6 +44,16 @@ if TYPE_CHECKING:
 
 pytestmark = pytest.mark.usefixtures("fast_sleep", "killed_pty_children")
 
+# spawn(echo=False), setecho() and waitnoecho() all raise ExceptionPexpect on
+# Windows, because ConPTY keeps echo in the child's own console host where the
+# parent cannot reach it. Every test that turns echo off, through the
+# constructor or through the method, carries this rather than a weakened
+# assertion; see tests/test_unsupported.py for the refusal itself.
+_NEEDS_ECHO_CONTROL = pytest.mark.skipif(
+    sys.platform == "win32",
+    reason="needs echo control: spawn(echo=False), setecho() and waitnoecho() are refused",
+)
+
 # Python 3.14 changed the non-macOS POSIX default to forkserver
 # but the code in this module does not work with it
 # See https://github.com/python/cpython/issues/125714
@@ -112,6 +122,7 @@ class _Matcher(Protocol):
 class ExpectTestCase(pexpect_test_case.PexpectTestCase):
     """Cover expect(), expect_exact() and the before/after buffers they set."""
 
+    @_NEEDS_ECHO_CONTROL
     def test_expect_basic(self) -> None:
         """Match three patterns in the order they were sent, then EOF."""
         p = pexpect.spawn(commands.CAT, echo=False, timeout=5)
@@ -124,6 +135,7 @@ class ExpectTestCase(pexpect_test_case.PexpectTestCase):
         p.sendeof()
         p.expect(pexpect.EOF)
 
+    @_NEEDS_ECHO_CONTROL
     def test_expect_exact_basic(self) -> None:
         """Like test_expect_basic(), but matching literals with expect_exact()."""
         p = pexpect.spawn(commands.CAT, echo=False, timeout=5)
@@ -136,6 +148,7 @@ class ExpectTestCase(pexpect_test_case.PexpectTestCase):
         p.sendeof()
         p.expect_exact(pexpect.EOF)
 
+    @_NEEDS_ECHO_CONTROL
     def test_expect_ignore_case(self) -> None:
         """Match patterns of differing case using the regex (?i) directive."""
         p = pexpect.spawn(commands.CAT, echo=False, timeout=5)
@@ -146,6 +159,7 @@ class ExpectTestCase(pexpect_test_case.PexpectTestCase):
         p.sendeof()
         p.expect(pexpect.EOF)
 
+    @_NEEDS_ECHO_CONTROL
     def test_expect_ignore_case_flag(self) -> None:
         """Match patterns of differing case once the ignorecase flag is set."""
         p = pexpect.spawn(commands.CAT, echo=False, timeout=5)
@@ -178,6 +192,7 @@ class ExpectTestCase(pexpect_test_case.PexpectTestCase):
         assert isinstance(c.pattern, str)
         p.expect(pexpect.EOF)
 
+    @_NEEDS_ECHO_CONTROL
     def test_expect_regex_enc_none(self) -> None:
         """Accept a regex compiled from str on a bytes mode spawn (encoding=None)."""
         p = pexpect.spawn(commands.CAT, echo=False, timeout=5)
@@ -189,6 +204,7 @@ class ExpectTestCase(pexpect_test_case.PexpectTestCase):
         p.sendeof()
         p.expect_exact(pexpect.EOF)
 
+    @_NEEDS_ECHO_CONTROL
     def test_expect_regex_enc_utf8(self) -> None:
         """Accept a regex compiled from bytes on a str mode spawn (encoding='utf-8')."""
         p = pexpect.spawn(commands.CAT, echo=False, timeout=5, encoding="utf-8")
@@ -200,6 +216,7 @@ class ExpectTestCase(pexpect_test_case.PexpectTestCase):
         p.sendeof()
         p.expect_exact(pexpect.EOF)
 
+    @_NEEDS_ECHO_CONTROL
     def test_expect_order(self) -> None:
         """Match patterns in the same order as given in the pattern_list.
 
@@ -210,6 +227,7 @@ class ExpectTestCase(pexpect_test_case.PexpectTestCase):
         p = pexpect.spawn(commands.CAT, echo=False, timeout=5)
         self._expect_order(p, p.expect)
 
+    @_NEEDS_ECHO_CONTROL
     def test_expect_order_exact(self) -> None:
         """Like test_expect_order(), but using expect_exact()."""
         p = pexpect.spawn(commands.CAT, echo=False, timeout=5)
@@ -241,6 +259,7 @@ class ExpectTestCase(pexpect_test_case.PexpectTestCase):
         index = expect(patterns)
         assert patterns[index] == pexpect.EOF, (index, p.before, p.after)
 
+    @_NEEDS_ECHO_CONTROL
     def test_expect_setecho_off(self) -> None:
         """Toggle tty echo off half way through a session and keep matching."""
         p = pexpect.spawn(commands.CAT, echo=True, timeout=5)
@@ -252,6 +271,7 @@ class ExpectTestCase(pexpect_test_case.PexpectTestCase):
                 raise unittest.SkipTest(msg) from None
             raise
 
+    @_NEEDS_ECHO_CONTROL
     def test_expect_setecho_off_exact(self) -> None:
         """Like test_expect_setecho_off(), but using expect_exact()."""
         p = pexpect.spawn(commands.CAT, echo=True, timeout=5)
@@ -263,6 +283,7 @@ class ExpectTestCase(pexpect_test_case.PexpectTestCase):
                 raise unittest.SkipTest(msg) from None
             raise
 
+    @_NEEDS_ECHO_CONTROL
     def test_waitnoecho(self) -> None:
         """Tests setecho(False) followed by waitnoecho()."""
         p = pexpect.spawn(commands.CAT, echo=False, timeout=5)
@@ -316,11 +337,13 @@ class ExpectTestCase(pexpect_test_case.PexpectTestCase):
         assert patterns[index] == b"7890", "index=" + str(index)
         p.sendeof()
 
+    @_NEEDS_ECHO_CONTROL
     def test_expect_index(self) -> None:
         """Return the correct index for a mixed list of regexes, TIMEOUT and EOF."""
         p = pexpect.spawn(commands.CAT, echo=False, timeout=5)
         self._expect_index(p, p.expect)
 
+    @_NEEDS_ECHO_CONTROL
     def test_expect_index_exact(self) -> None:
         """Like test_expect_index(), but using expect_exact()."""
         p = pexpect.spawn(commands.CAT, echo=False, timeout=5)
@@ -574,6 +597,7 @@ class ExpectTestCase(pexpect_test_case.PexpectTestCase):
         # drive the helper with expect_exact() instead
         self._before_after(p, p.expect_exact)
 
+    @_NEEDS_ECHO_CONTROL
     def test_before_after_timeout(self) -> None:
         """Tests that timeouts do not truncate before, a bug in 4.4-4.7."""
         child = pexpect.spawn(commands.CAT, echo=False)
@@ -593,6 +617,7 @@ class ExpectTestCase(pexpect_test_case.PexpectTestCase):
         child.sendeof()
         child.expect(pexpect.EOF)
 
+    @_NEEDS_ECHO_CONTROL
     def test_increasing_searchwindowsize(self) -> None:
         """Tests that the search window can be expanded, a bug in 4.4-4.7."""
         child = pexpect.spawn(commands.CAT, echo=False)
@@ -694,6 +719,10 @@ class ExpectTestCase(pexpect_test_case.PexpectTestCase):
         p.expect("abcdef")
         p.expect(pexpect.EOF)
 
+    @pytest.mark.skipif(
+        sys.platform == "win32",
+        reason="needs signal.SIGALRM and setitimer(), neither of which Windows has",
+    )
     def test_signal_handling(self) -> None:
         """Keep expect() going across a signal interrupt.
 
