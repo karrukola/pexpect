@@ -87,6 +87,23 @@ def test_windows_refuses_the_posix_only_arguments(name: str, kwargs: dict[str, o
         pexpect.spawn(_CHILD[0], _CHILD[1:], **kwargs)  # type: ignore[call-overload]
 
 
+@pytest.mark.skipif(not _ON_WINDOWS, reason="POSIX sends any byte a caller likes")
+@pytest.mark.parametrize("send", [lambda c: c.send(b"\xff"), lambda c: c.write(b"\xff")])
+def test_windows_refuses_bytes_that_are_not_utf8(
+    child: pexpect.spawn[bytes],
+    send: Callable[[pexpect.spawn[bytes]], object],
+) -> None:
+    """A bytes-mode payload that is not valid UTF-8 is refused, not mangled.
+
+    pywinpty's write takes a Rust str, so a byte outside UTF-8 is either
+    rejected there or re-encoded on the way through. send() is the commonest
+    call in the library and sendline() and write() both funnel into it, which
+    is why this is worth an assertion of its own rather than a docs footnote.
+    """
+    with pytest.raises(pexpect.ExceptionPexpect, match="UTF-8"):
+        send(child)
+
+
 @pytest.mark.skipif(_ON_WINDOWS, reason="the Windows half is asserted above")
 def test_posix_supports_the_same_calls(child: pexpect.spawn[bytes]) -> None:
     """Every call refused on Windows still works exactly as before on POSIX."""
@@ -94,3 +111,5 @@ def test_posix_supports_the_same_calls(child: pexpect.spawn[bytes]) -> None:
     child.setecho(state=False)
     assert child.waitnoecho(timeout=5) is True
     child.kill(_SIGHUP)
+    # The non-UTF-8 payload the Windows backend refuses goes through here.
+    assert child.send(b"\xff") == 1

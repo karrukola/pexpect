@@ -267,9 +267,42 @@ ConPTY has no way to deliver. The ``preexec_fn``, ``ignore_sighup``,
 ``echo=False`` and ``use_poll=True`` constructor arguments raise the same way,
 for the same underlying reason -- there is no fork to run a preexec hook in, no
 ``SIGHUP`` to ignore, no echo to turn off from this side, and no
-:func:`select.poll` on this platform. ``tests/test_unsupported.py`` is the
-authority for this list: it asserts the raise on Windows and the equivalent
-working call on POSIX side by side, so the two cannot drift apart unnoticed.
+:func:`select.poll` on this platform. :meth:`~pexpect.spawn.send`,
+:meth:`~pexpect.spawn.sendline` and :meth:`~pexpect.spawn.write` raise too,
+but only for a payload that is not valid UTF-8: pywinpty's write takes a
+string rather than bytes, and a byte that is not part of a UTF-8 sequence
+either is rejected there or arrives re-encoded, so pexpect refuses it up front
+instead of sending something the child did not ask for. In text mode, and in
+bytes mode for anything a terminal would normally carry, this never comes up.
+``tests/test_unsupported.py`` is the authority for this list: it asserts the
+raise on Windows and the equivalent working call on POSIX side by side, so the
+two cannot drift apart unnoticed.
+
+Two things behave differently rather than raising, and both are worth knowing
+before relying on them.
+
+:meth:`~pexpect.spawn.read` is not byte-exact in bytes mode. pywinpty pumps
+the child's output through a reader thread that decodes it as UTF-8 and
+re-encodes it before pexpect ever sees it, so output that is not valid UTF-8 --
+binary, or text in a single-byte code page -- is already altered by then. The
+guarantee pexpect gives on POSIX, that bytes mode returns exactly what the
+child wrote, does not hold here; a child whose output is really binary is
+better driven with :class:`pexpect.popen_spawn.PopenSpawn`, which reads a pipe.
+
+:class:`pexpect.replwrap.REPLWrapper` does not work at all. Every path into it
+turns echo off -- ``REPLWrapper`` spawns with ``echo=False``, and when handed
+an existing spawn it calls ``setecho(False)`` -- so it raises
+:class:`~pexpect.exceptions.ExceptionPexpect` on Windows before it can reach a
+prompt. Nothing in ``pexpect.replwrap`` is usable there, and the module is
+skipped rather than adapted, because a REPL that echoes its own input back
+would need the prompt-matching rewritten rather than a flag flipped.
+
+One inherited weakness belongs here too, because it is not pexpect's to fix
+and it has a security shape. Each spawn makes pywinpty open a listening socket
+on ``127.0.0.1`` for its reader thread to connect back to; another local
+process can race that connect and read the child's output. On a shared or
+multi-user Windows host, treat a spawned child's output as readable by anyone
+who can run code on the machine.
 
 ``PopenSpawn`` is not a direct replacement for ``spawn``, on Windows or off it.
 Many programs only offer interactive behaviour if they detect that they are

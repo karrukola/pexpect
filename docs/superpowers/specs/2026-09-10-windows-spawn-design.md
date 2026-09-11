@@ -106,9 +106,19 @@ recorded here so they are not rediscovered as pexpect bugs:
 * Each spawn opens a listening TCP socket on `127.0.0.1`. A local process
   could win the race to connect and read the child's output.
 * Their reader thread sends the in-band sentinel `b'0011Ignore'` for an
-  empty read and strips it on the way out, so a child printing that exact
-  string loses it. `PYWINPTY_BLOCK` defaults to `1`, which makes the
-  sentinel rare.
+  empty read and strips it on the way out only inside the `read()` this
+  design bypasses, so a child printing that exact string loses it.
+  `PYWINPTY_BLOCK` defaults to `1`, which was first written down here as
+  making the sentinel rare; that was wrong. A blocking native read returns
+  empty at end of file, which is exactly when the sentinel is emitted -- ten
+  bytes on the socket immediately before the FIN, every time a child exits.
+  `read_bytes()` therefore buffers: it reads ahead of the caller's `size`,
+  strips the sentinel from the accumulated buffer, and holds back a tail
+  that is still a possible sentinel. Reading ahead makes the buffer
+  invisible to `select()`, so the backend surface carries `pending()` and
+  `pty_spawn._ready()` consults it.
+* Their reader thread also writes with `socket.send()` rather than
+  `sendall()`, so a partial send drops the remainder of a chunk.
 
 ### One `spawn` class, not two
 
@@ -218,8 +228,16 @@ to the adapter on Windows.
 `spawn`, `spawnu`, `run` and `runu` import unconditionally. That single
 change is what fixes the reported `AttributeError`.
 
-`pexpect.pxssh` and `pexpect.replwrap` need no edit. Both sit on `spawn`,
-and Windows 10 and 11 ship an OpenSSH client.
+`pexpect.pxssh` and `pexpect.replwrap` need no edit to import, and neither
+is edited here. What that buys differs between them. `pxssh` sits on
+`spawn` and Windows 10 and 11 ship an OpenSSH client, so it is expected to
+work. `replwrap` is not: `REPLWrapper` spawns with `echo=False` and, when
+handed an existing spawn, calls `setecho(False)`, so every path into it
+raises on Windows. That is a defensible outcome -- a REPL that echoes its
+own input back needs the prompt matching rewritten, not a flag flipped --
+but it is an outcome, not a non-event, and `doc/overview.rst`'s Windows
+section says so for the benefit of anyone who reads the module and not
+this file.
 
 ## Typing and lint
 

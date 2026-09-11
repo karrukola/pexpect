@@ -72,8 +72,20 @@ pexpect's central class, ``spawn``, drives a child through a pty, and Windows
 has none of its own -- but it has ConPTY, and ``src/pexpect/_winpty.py`` wraps
 pywinpty's version of one behind the same ``read_bytes``/``write_bytes`` seam
 ``src/pexpect/_ptyproc.py`` uses for ptyprocess on POSIX. ``nox`` with no
-arguments passes on both platforms as a result, though ``test`` covers less of
-the suite on Windows than on POSIX.
+arguments is expected to pass on both platforms as a result, though ``test``
+covers less of the suite on Windows than on POSIX.
+
+Expected, not observed. None of the Windows-specific code in this project has
+ever run: it was written on Linux, there is no Windows machine here and no
+access to a CI run from one, and ``import winpty`` fails on this side. Every
+statement in this section about what Windows does is established by reading --
+pywinpty's own sources, the ConPTY documentation -- and waits on the first
+Windows run to confirm or contradict it. What that run is expected to be
+informative about is narrower than "does it work": ConPTY's VT injection, how
+much of it reaches ``expect_exact`` and anchored patterns, EOF timing against
+pywinpty's reader thread, and whether ``sendeof``'s Ctrl-Z lands. Those four
+are the real unknowns, and keeping known refusals out of the way of them is
+why so much of the suite is skipped there by name rather than left to fail.
 
 ``lint`` runs mypy twice there, once per platform: ``[tool.mypy]`` in
 ``pyproject.toml`` carries no ``platform`` pin, because both platforms now have
@@ -81,20 +93,36 @@ live code to check and pinning either one would silence the other's errors.
 ``noxfile.py``'s ``lint`` session runs the win32 pass over ``src/`` only --
 its comment there says why ``tests/`` is not part of it.
 
-``test`` runs almost everything on Windows too. What does not is four modules
-and one whole directory, each skipping itself with a module-level
-``pytest.mark.skipif`` rather than disappearing from collection the way the
-old ``_POSIX_ONLY``/``collect_ignore`` pair in ``tests/conftest.py`` used to --
-a skip is counted and reported, a dropped module is invisible. ``test_socket.py``
-and ``test_socket_fd.py`` need ``os.fork`` to carry a bound method into a
-subprocess; ``test_pxssh.py`` drives an ``ssh`` binary; ``test_popen_spawn.py``
-drives ``cat``, ``echo``, ``sleep`` and ``ls``, plus ``SIGKILL``/``SIGTERM``
-delivery, even though ``PopenSpawn`` is the class pexpect offers Windows for a
-child that needs no pty. ``tests/integration`` has no module-level mark of its
-own to carry, so its ``conftest.py`` skips every test under it the same way,
-for the same reason: POSIX programs. Beyond these, individual tests elsewhere
-skip themselves on whichever platform lacks the POSIX program they need --
-``ls``, ``uname``, ``sh``, ``pwd``, ``bash`` -- the same way they always did.
+``test`` runs most of the suite on Windows, and rather less than all of it.
+Six modules and one whole directory skip themselves entirely, each with a
+module-level ``pytest.mark.skipif`` rather than disappearing from collection
+the way the old ``_POSIX_ONLY``/``collect_ignore`` pair in
+``tests/conftest.py`` used to -- a skip is counted and reported, a dropped
+module is invisible. ``test_socket.py`` and ``test_socket_fd.py`` need
+``os.fork`` to carry a bound method into a subprocess; ``test_pxssh.py``
+drives an ``ssh`` binary; ``test_popen_spawn.py`` drives ``cat``, ``echo``,
+``sleep`` and ``ls``, plus ``SIGKILL``/``SIGTERM`` delivery, even though
+``PopenSpawn`` is the class pexpect offers Windows for a child that needs no
+pty; ``test_winsize.py`` drives ``tests/sigwinch_report.py``, which imports
+``fcntl`` and ``termios`` and installs a ``SIGWINCH`` handler; and
+``test_ctrl_chars.py`` drives ``tests/getch.py``, which imports ``termios``
+and ``tty``. Both of those helpers would have to be rewritten for a console
+before either module could run, and what the window size and the control
+characters do under ConPTY is a question for a machine that has one.
+``tests/integration`` has no module-level mark of its own to carry, so its
+``conftest.py`` skips every test under it the same way, for the same reason:
+POSIX programs.
+
+Beyond those, about thirty individual tests in ``test_expect.py``,
+``test_misc.py`` and ``test_unicode.py`` skip themselves on Windows because
+they call something the backend refuses by design: echo control
+(``spawn(echo=False)``, ``setecho()``, ``waitnoecho()``), ``use_poll=True``,
+``ignore_sighup=True``, or ``signal.SIGALRM``. Each mark names the refused
+call rather than the platform, and ``doc/overview.rst``'s Windows section plus
+``tests/test_unsupported.py`` are where the refusals themselves are recorded.
+Individual tests elsewhere also skip themselves on whichever platform lacks
+the POSIX program they need -- ``ls``, ``uname``, ``sh``, ``pwd``, ``bash`` --
+the same way they always did.
 
 What runs instead of a literal ``cat``, ``echo``, ``sleep`` or ``true`` is a
 Python stand-in under ``tests/helpers/``, resolved once per platform by
@@ -105,17 +133,18 @@ before the stand-ins existed, and are converted to call through
 directly, so a broken stand-in fails on Linux instead of only on a Windows CI
 leg nobody here can watch.
 
-A run that skips a directory and four modules cannot meet the 100% floor
+A run that skips a directory and six modules cannot meet the 100% floor
 ``pyproject.toml`` sets, so ``collate_coverage`` holds a Windows run to
-``_WINDOWS_COVERAGE_FLOOR`` in ``noxfile.py`` instead. It is a real gate, not a
-formality -- a regression that drops Windows coverage fails the session -- and
-it has to be re-tuned by hand whenever a module moves across the POSIX/Windows
-line, which is a change the same diff will show. The figure there right now is
-stale: it was measured back when nearly the whole suite dropped out of
-collection on Windows, before ``pexpect.spawn`` ran there at all, so it no
-longer catches much. It wants raising to whatever the first Windows CI run of
-this change reports -- ``collate_coverage`` prints the total before it checks
-the floor.
+``_WINDOWS_COVERAGE_FLOOR`` in ``noxfile.py`` instead. It is a gate by design
+and inert in fact. By design, because a regression that drops Windows coverage
+below the figure fails the session, and because the figure has to be re-tuned
+by hand whenever a module moves across the POSIX/Windows line -- which is a
+change the same diff will show. Inert, because the figure there right now was
+measured when nearly the whole suite dropped out of collection on Windows,
+before ``pexpect.spawn`` ran there at all, so almost any regression still
+clears it. It wants raising to whatever the first Windows CI run of this
+change reports -- ``collate_coverage`` prints the total before it checks the
+floor -- and until someone does that, it is a gate that catches nothing.
 
 ``.gitattributes`` says ``* text=auto eol=lf``, and it earns its place here:
 the suite compares bytes it reads from ``tests/TESTDATA.txt`` and the ``.vt``
@@ -125,8 +154,9 @@ made with ``core.autocrlf=true`` before that file existed still has CRLF on
 disk; in a clean tree, ``git rm -r --cached . && git reset --hard`` refreshes
 it.
 
-CI verifies all of it: both jobs run on ``windows-latest`` as well as on
-``ubuntu-latest``, and the two commands are the same ones. See `How CI runs it`_.
+CI is where all of it gets verified, and where it has yet to be: both jobs run
+on ``windows-latest`` as well as on ``ubuntu-latest``, and the two commands are
+the same ones. See `How CI runs it`_.
 
 How CI runs it
 ==============

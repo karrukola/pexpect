@@ -197,13 +197,15 @@ class PtyProcess:
         handed over, so no output is lost to it. A read that is empty only
         once the sentinel is stripped out is not end of file: it is retried.
 
-        The retry does not spin under the configuration this module assumes:
+        The retry does not spin under the configuration this module assumes.
         PYWINPTY_BLOCK defaults to 1, which makes the native read block, so
-        an empty native read -- and so a sentinel-only chunk -- is rare.
-        Setting PYWINPTY_BLOCK=0 makes the reader thread poll and emit the
-        sentinel roughly once a millisecond, which would spin this loop for
-        as long as the child keeps running with nothing to say; this module
-        neither sets nor recommends that.
+        the one thing that produces an empty native read is the child exiting
+        -- the sentinel arrives once, immediately before the FIN, and the next
+        recv() here returns empty and ends the loop. Setting PYWINPTY_BLOCK=0
+        makes the reader thread poll and emit the sentinel roughly once a
+        millisecond, which would spin this loop for as long as the child keeps
+        running with nothing to say; this module neither sets nor recommends
+        that.
         """
         while True:
             ready = self._pending_count()
@@ -243,9 +245,10 @@ class PtyProcess:
         is either rejected outright or re-encoded into three-byte WTF-8. A
         non-UTF-8 payload is refused up front instead, rather than risking a
         bare UnicodeEncodeError or silent corruption. On success the byte
-        count pexpect's send() contract wants is len(data) itself -- valid
-        UTF-8 decodes to exactly that many bytes -- which is simpler than
-        trusting pywinpty's own return value.
+        count pexpect's send() contract wants is len(data) itself, since valid
+        UTF-8 decodes to exactly that many bytes; pywinpty's own return value
+        is used only to tell a short write from a complete one, for which see
+        the comment on the comparison below.
         """
         try:
             text = data.decode("utf-8")
