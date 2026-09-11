@@ -179,3 +179,35 @@ def test_buffered_output_is_reported_as_pending(backend: ModuleType) -> None:
     assert child.pending()
     assert child.read_bytes(1024) == b"ello"
     assert not child.pending()
+
+
+def test_an_abortive_close_is_read_as_end_of_file(backend: ModuleType) -> None:
+    """A reset connection means the same thing as the orderly FIN.
+
+    An abortive close of the loopback socket is one of the ways a child exit
+    can present on Windows. Reported as an error it would come out of
+    expect() as an exception; read as end of file it is what every pexpect
+    caller already handles.
+    """
+    child = _child(backend)
+    child._proc.fileobj.error = ConnectionResetError(
+        10054, "An existing connection was forcibly closed by the remote host"
+    )
+    assert child.read_bytes(1024) == b""
+    assert child.flag_eof
+
+
+def test_any_other_socket_error_becomes_a_backend_error(backend: ModuleType) -> None:
+    """A socket failure that is not an end of file is still pexpect's own type.
+
+    WinError 10038 on a handle that has been closed is the example. Left as a
+    raw OSError it would escape expect() unrecognised, because SpawnBase's
+    read_nonblocking translates only errno EIO.
+    """
+    child = _child(backend)
+    child._proc.fileobj.error = OSError(
+        10038, "An operation was attempted on something that is not a socket"
+    )
+    with pytest.raises(backend.PtyProcessError, match="not a socket"):
+        child.read_bytes(1024)
+    assert not child.flag_eof

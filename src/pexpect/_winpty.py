@@ -151,10 +151,8 @@ class PtyProcess:
         # and pywinpty resolves argv[0] with shutil.which() and joins the rest
         # with subprocess.list2cmdline(), both of which want str.
         decoded = [a if isinstance(a, str) else os.fsdecode(a) for a in argv]
-        try:
+        with _as_ptyproc_err():
             proc = winpty.PtyProcess.spawn(decoded, cwd=cwd, env=env, dimensions=dimensions)
-        except (winpty.WinptyError, OSError) as e:
-            raise PtyProcessError(*e.args) from e
         return cls(proc)
 
     def _pending_count(self) -> int:
@@ -254,14 +252,23 @@ class PtyProcess:
         except UnicodeDecodeError as e:
             msg = f"write_bytes() cannot send non-UTF-8 bytes on Windows: {e}"
             raise PtyProcessError(msg) from e
-        try:
-            self._proc.write(text)
-        except (winpty.WinptyError, EOFError, OSError) as e:
-            # winpty.PtyProcess.write() raises a bare EOFError if the child
-            # has already exited, which PtyProcessError is what lets
-            # terminate() and pty_spawn's _wrap_ptyprocess_err tell apart
-            # from a real bug.
-            raise PtyProcessError(*e.args) from e
+        # winpty.PtyProcess.write() raises a bare EOFError if the child has
+        # already exited; PtyProcessError is what lets terminate() and
+        # pty_spawn's _wrap_ptyprocess_err tell that from a real bug.
+        with _as_ptyproc_err():
+            written = self._proc.write(text)
+        if written < len(text):
+            # Compared against the character count, not len(data), because
+            # pywinpty declares PTY.write() as returning an int and documents
+            # no unit for it: the native side could be counting UTF-8 bytes,
+            # UTF-16 code units, or UTF-16 bytes, and its own test suite calls
+            # the value `num_bytes` without asserting anything about it. Every
+            # one of those encodings spends at least one unit per character,
+            # so fewer units than characters is a short write under all of
+            # them, while an equality check against len(data) would raise on
+            # every non-ASCII send if the unit is not the one assumed.
+            msg = f"write_bytes() wrote {written} of {len(data)} bytes"
+            raise PtyProcessError(msg)
         return len(data)
 
     def isatty(self) -> bool:
@@ -331,30 +338,36 @@ class PtyProcess:
 
     def getwinsize(self) -> tuple[int, int]:
         """Return the console size as (rows, cols)."""
-        rows, cols = self._proc.getwinsize()
+        with _as_ptyproc_err():
+            rows, cols = self._proc.getwinsize()
         return rows, cols
 
     def setwinsize(self, rows: int, cols: int) -> None:
         """Resize the ConPTY."""
-        self._proc.setwinsize(rows, cols)
+        with _as_ptyproc_err():
+            self._proc.setwinsize(rows, cols)
 
     def isalive(self) -> bool:
         """Whether the child is still running, reaping it if it is not."""
-        if self._proc.isalive():
+        with _as_ptyproc_err():
+            alive = self._proc.isalive()
+        if alive:
             return True
         self._reap()
         return False
 
     def wait(self) -> int | None:
         """Block until the child exits and return its exit status."""
-        self._proc.wait()
+        with _as_ptyproc_err():
+            self._proc.wait()
         self._reap()
         return self.exitstatus
 
     def _reap(self) -> None:
         """Record the exit status once, the way ptyprocess's isalive() does."""
         if not self.terminated:
-            self.exitstatus = self._proc.exitstatus
+            with _as_ptyproc_err():
+                self.exitstatus = self._proc.exitstatus
             # ptyprocess's `status` is the raw os.waitpid() status, which has no
             # Windows counterpart. With signalstatus always None, the exit code
             # is the whole of what there is to report.
@@ -401,7 +414,8 @@ class PtyProcess:
         if sig == signal.SIGINT:
             self.sendintr()
             return
-        os.kill(self.pid, signal.SIGTERM)
+        with _as_ptyproc_err():
+            os.kill(self.pid, signal.SIGTERM)
 
     def close(self, force: bool = True) -> None:
         """Close the connection to the child, terminating it if *force*."""
@@ -420,9 +434,8 @@ class PtyProcess:
             # raises ResourceWarning, which filterwarnings = ["error"] would
             # turn into a failure somewhere unrelated.
             self._proc.closed = False
-            self._proc.close(force=force)
-        except (winpty.WinptyError, OSError) as e:
-            raise PtyProcessError(*e.args) from e
+            with _as_ptyproc_err():
+                self._proc.close(force=force)
         finally:
             self.fd = -1
         self.isalive()

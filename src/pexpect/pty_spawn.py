@@ -606,8 +606,17 @@ class spawn(SpawnBase[AnyStr]):
         return bool(select_ignore_interrupts([self.child_fd], [], [], timeout)[0])
 
     def _read_fd(self, size: int) -> bytes:
-        """Read from the pty through the process backend rather than os.read()."""
-        return self.ptyproc.read_bytes(size)
+        """Read from the pty through the process backend rather than os.read().
+
+        Wrapped because this is the hottest path in the library and the one
+        place a backend error would escape through expect(): SpawnBase's
+        read_nonblocking translates an OSError of errno EIO into EOF and
+        re-raises everything else, and the Windows backend reports a socket
+        failure as PtyProcessError, which pexpect owns but callers do not
+        catch. On POSIX read_bytes() is os.read(), which never raises this.
+        """
+        with _wrap_ptyprocess_err():
+            return self.ptyproc.read_bytes(size)
 
     def _base_read_nonblocking(self, size: int) -> AnyStr:
         """Read one chunk through :class:`SpawnBase`, in this instance's string mode.
@@ -871,13 +880,16 @@ class spawn(SpawnBase[AnyStr]):
         """
         if not self.isalive():
             return True
-        if sys.platform == "win32":
-            # Ctrl-C, then TerminateProcess only with force. The POSIX ladder's
-            # SIGHUP and SIGCONT have no counterpart, and os.kill() there
-            # treats any signal but SIGTERM as an exit code rather than a
-            # signal, so walking the ladder would kill on the first rung.
-            return bool(self.ptyproc.terminate(force=force))
         try:
+            if sys.platform == "win32":
+                # Ctrl-C, then TerminateProcess only with force. The POSIX
+                # ladder's SIGHUP and SIGCONT have no counterpart, and
+                # os.kill() there treats any signal but SIGTERM as an exit
+                # code rather than a signal, so walking the ladder would kill
+                # on the first rung. Inside this try so that the Windows arm
+                # gets the same last-attempt answer the POSIX one does; see
+                # the except below.
+                return bool(self.ptyproc.terminate(force=force))
             for sig in (signal.SIGHUP, signal.SIGCONT, signal.SIGINT):
                 self.kill(sig)
                 time.sleep(self.delayafterterminate)
@@ -887,11 +899,18 @@ class spawn(SpawnBase[AnyStr]):
                 self.kill(signal.SIGKILL)
                 time.sleep(self.delayafterterminate)
                 return not self.isalive()
-        except OSError:
+        except (OSError, PtyProcessError):
             # I think there are kernel timing issues that sometimes cause
             # this to happen. I think isalive() reports True, but the
             # process is dead to the kernel.
             # Make one last attempt to see if the kernel is up to date.
+            #
+            # PtyProcessError is how the Windows backend spells the same
+            # thing. It translates everything pywinpty and os.kill() can
+            # throw, so the failure POSIX reports as an OSError for a pid the
+            # kernel has already reaped arrives here as that type instead --
+            # and terminate() answers with a bool on both platforms rather
+            # than raising on one of them.
             time.sleep(self.delayafterterminate)
             return not self.isalive()
         else:
@@ -968,7 +987,12 @@ class spawn(SpawnBase[AnyStr]):
         TTY-aware applications like vi or curses -- applications that respond
         to the SIGWINCH signal.
         """
-        return self.ptyproc.setwinsize(rows, cols)
+        # Wrapped because the Windows backend's set_size() reaches ConPTY,
+        # which can fail for reasons of its own; every other call into the
+        # backend is already wrapped, and this was the one place where a
+        # backend error could reach a caller as PtyProcessError.
+        with _wrap_ptyprocess_err():
+            return self.ptyproc.setwinsize(rows, cols)
 
     def interact(
         self,
