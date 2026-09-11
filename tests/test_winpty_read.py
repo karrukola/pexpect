@@ -16,7 +16,9 @@ right, on any platform:
   depends on -- an empty read means ``flag_eof`` and ``b""`` -- is unchanged,
   and is not reported while buffered output is still undelivered;
 * an abortive socket close reads as end of file, and any other socket error as
-  a backend error rather than as a raw ``OSError`` out of ``expect()``.
+  a backend error rather than as a raw ``OSError`` out of ``expect()``;
+* a withheld tail that nothing is going to complete is handed over instead of
+  blocking in ``recv()``, which on a real socket would hang without bound.
 
 The sentinel literal below is ``winpty/ptyprocess.py:353``'s, written out
 rather than imported from the module under test, so that this file says what
@@ -26,6 +28,7 @@ pywinpty does instead of agreeing with what pexpect believes about it.
 from __future__ import annotations
 
 import importlib.util
+import os
 import sys
 from collections import deque
 from pathlib import Path
@@ -37,7 +40,7 @@ import pytest
 import pexpect
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Sequence
+    from collections.abc import Callable, Iterator, Sequence
 
 # winpty/ptyprocess.py:353: `data = pty.read(blocking=blocking) or '0011Ignore'`,
 # sent as UTF-8 on the line below it. Ten bytes, which is why a one-byte read
@@ -49,6 +52,12 @@ class _WinptyError(Exception):
     """Stands in for winpty.WinptyError, which is also a plain Exception."""
 
 
+# Every stand-in socket made during a test, so the fixture below can close the
+# pipe each one keeps. A module-level list rather than a factory fixture so
+# that the helper stays callable as _child(backend, ...) from any test.
+_OPEN: list[_Socket] = []
+
+
 class _Socket:
     """The loopback socket pywinpty's reader thread writes the child into.
 
@@ -56,28 +65,68 @@ class _Socket:
     scripted sends. That is the conservative half of what a stream socket may
     do -- the kernel is also free to coalesce two sends into one read, which a
     script that wants that writes as a single chunk.
+
+    A real pipe stands behind ``fileno()`` so that the ``select()`` in
+    ``_socket_readable()`` is the real one, answering about a real descriptor:
+    one byte is parked in the pipe for each chunk still to be handed out, plus
+    one for the close, and each ``recv()`` that finishes a chunk takes its byte
+    back out. So "readable" means "there is more coming", which is what the
+    kernel would say of the real socket.
+
+    *closes* is what happens when the script runs out. True is the reader
+    thread's FIN -- an empty read, and end of file. False is a child that is
+    simply quiet: a real blocking socket would sit in ``recv()`` forever, and
+    the ``BlockingIOError`` here is how that shows up as a failing test rather
+    than as a hung one.
     """
 
-    def __init__(self, chunks: Sequence[bytes]) -> None:
+    def __init__(self, chunks: Sequence[bytes], *, closes: bool = True) -> None:
         """Script the sends the reader thread is to have made."""
         self.chunks = deque(chunks)
         self.sizes: list[int] = []
         self.error: OSError | None = None
+        self.closes = closes
+        self._read_fd, self._write_fd = os.pipe()
+        os.write(self._write_fd, b"." * (len(self.chunks) + int(closes)))
+        _OPEN.append(self)
+
+    def close(self) -> None:
+        """Release the pipe behind fileno()."""
+        os.close(self._read_fd)
+        os.close(self._write_fd)
+
+    def fileno(self) -> int:
+        """Return the descriptor select() is to answer about."""
+        return self._read_fd
 
     def recv(self, size: int) -> bytes:
-        """Return up to *size* bytes, or b"" once the script has run out."""
+        """Return up to *size* bytes, or b"" once the script has closed."""
         self.sizes.append(size)
         if self.error is not None:
             raise self.error
         if not self.chunks:
+            if not self.closes:
+                msg = "recv() would block; a real socket would hang here"
+                raise BlockingIOError(msg)
             # The FIN the reader thread's `client.close()` sends once
             # pty.iseof() is true, which is what end of file looks like here.
+            os.read(self._read_fd, 1)
             return b""
         head = self.chunks.popleft()
         if len(head) > size:
+            # Part of a chunk is left, so its readability marker stays put.
             self.chunks.appendleft(head[size:])
             return head[:size]
+        os.read(self._read_fd, 1)
         return head
+
+
+@pytest.fixture(autouse=True)
+def _closed_stand_in_sockets() -> Iterator[None]:
+    """Close the pipes the stand-ins keep, so no test leaks descriptors."""
+    yield
+    while _OPEN:
+        _OPEN.pop().close()
 
 
 @pytest.fixture
@@ -104,6 +153,7 @@ def backend(monkeypatch: pytest.MonkeyPatch) -> ModuleType:
 def _child(
     backend: ModuleType,
     *chunks: bytes,
+    closes: bool = True,
     write: Callable[[str], int] | None = None,
 ) -> Any:  # noqa: ANN401
     """Return the backend over a socket that sends *chunks* and then closes.
@@ -113,7 +163,12 @@ def _child(
     winpty.PtyProcess.write(), whose return value is the only thing the write
     path cannot reason about from the source -- see the tests that use it.
     """
-    proc = SimpleNamespace(fileobj=_Socket(chunks), pid=4321, fd=7, write=write)
+    proc = SimpleNamespace(
+        fileobj=_Socket(chunks, closes=closes),
+        pid=4321,
+        fd=7,
+        write=write,
+    )
     return backend.PtyProcess(proc)
 
 
@@ -184,6 +239,54 @@ def test_buffered_output_is_reported_as_pending(backend: ModuleType) -> None:
     assert child.read_bytes(1) == b"h"
     assert child.pending()
     assert child.read_bytes(1024) == b"ello"
+    assert not child.pending()
+
+
+def test_a_withheld_tail_is_delivered_rather_than_waited_on(backend: ModuleType) -> None:
+    """A quiet child must not leave read_bytes() blocked in recv() forever.
+
+    b"0" is a proper prefix of the sentinel, so it is withheld -- and the
+    child that wrote it is now waiting for input, so the socket stays empty.
+    Looping for more data here is a blocking recv() that never returns: an
+    unbounded hang, in the one library whose whole point is that reads have
+    timeouts. It is not an exotic path either, since ConPTY echo is always on
+    and a caller's own send("0") comes back as a one-byte chunk.
+    """
+    child = _child(backend, b"0", closes=False)
+    assert child.read_bytes(1024) == b"0"
+    assert not child.flag_eof
+
+
+def test_a_withheld_tail_grown_by_a_later_chunk_is_still_delivered(
+    backend: ModuleType,
+) -> None:
+    """The same, when more output arrived and still did not settle it.
+
+    b"0" is withheld, b"011" completes b"0011" -- four bytes that are still a
+    possible sentinel -- and then the child goes quiet again. The poll has to
+    happen on every turn of the loop, not just the first.
+    """
+    child = _child(backend, b"0", b"011", closes=False)
+    assert child.read_bytes(1024) == b"0011"
+    assert not child.flag_eof
+
+
+def test_a_quiet_child_with_a_withheld_tail_is_reported_as_pending(
+    backend: ModuleType,
+) -> None:
+    """Readiness agrees with the read, so expect() does not wait for nothing.
+
+    A size-limited read is what leaves the buffer holding nothing but a
+    withheld tail: b"ab0" read one byte at a time gets through b"a" and b"b"
+    and stops. If pending() said no there, while read_bytes() would hand the
+    b"0" over, pty_spawn._ready() would fall through to select(), find the
+    drained socket, and time out holding a byte it already has.
+    """
+    child = _child(backend, b"ab0", closes=False)
+    assert child.read_bytes(1) == b"a"
+    assert child.read_bytes(1) == b"b"
+    assert child.pending()
+    assert child.read_bytes(1) == b"0"
     assert not child.pending()
 
 

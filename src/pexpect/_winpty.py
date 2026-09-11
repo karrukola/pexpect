@@ -46,6 +46,7 @@ recorded here so they are not rediscovered as pexpect bugs:
 from __future__ import annotations
 
 import os
+import select
 import signal
 import time
 from contextlib import contextmanager
@@ -172,6 +173,26 @@ class PtyProcess:
             held -= 1
         return len(self._buffer) - held
 
+    def _socket_readable(self) -> bool:
+        """Whether the socket has anything more to give right now.
+
+        select() with a zero timeout, which is the portable check: the
+        descriptor is a WinSock socket, which is what Windows select()
+        accepts, and pty_spawn._ready() already selects on this same one.
+        MSG_PEEK and a non-blocking socket were both considered and rejected
+        -- the first is another way to ask the same question, and the second
+        would change what every other read on this socket does.
+
+        It answers one question only: can a withheld sentinel prefix still be
+        completed? If nothing is arriving, it cannot, and blocking in recv()
+        to find out would hang a read that has bytes to hand over. At a real
+        end of file the FIN makes the socket readable, so a genuinely split
+        sentinel is still completed rather than truncated.
+        """
+        with _as_ptyproc_err():
+            readable, _, _ = select.select([self._proc.fileobj], [], [], 0)
+        return bool(readable)
+
     def pending(self) -> bool:
         """Whether output is buffered here that select() on the fd cannot see.
 
@@ -179,8 +200,16 @@ class PtyProcess:
         socket in chunks larger than the caller asked for: without this, a
         read_nonblocking(size=1) would take one byte of a 1024-byte chunk and
         then time out waiting for a socket that has already been drained.
+
+        A buffer that is entirely a withheld sentinel prefix counts too, once
+        the socket has gone quiet: read_bytes() hands those bytes over rather
+        than blocking for a sentinel that is not coming, so readiness has to
+        say so or pty_spawn would wait out its whole timeout for output it is
+        already holding.
         """
-        return self._pending_count() > 0
+        if self._pending_count() > 0:
+            return True
+        return bool(self._buffer) and not self._socket_readable()
 
     def read_bytes(self, size: int) -> bytes:
         """Read at most *size* bytes of the child's output.
@@ -209,6 +238,17 @@ class PtyProcess:
         """
         while True:
             ready = self._pending_count()
+            if not ready and self._buffer and not self._socket_readable():
+                # The whole buffer is a withheld sentinel prefix and nothing
+                # is arriving behind it to say whether it is one. Looping for
+                # more data here is a blocking recv() on an empty socket --
+                # an unbounded hang, inside the one library whose reason for
+                # existing is that reads have timeouts. A child that echoes
+                # a caller's "0" back and then waits for input is enough to
+                # reach it, and ConPTY echo is always on. So the bytes are
+                # the child's after all, on the same reasoning as end of
+                # file: what cannot be completed was never a sentinel.
+                ready = len(self._buffer)
             if ready:
                 chunk = bytes(self._buffer[: min(size, ready)])
                 del self._buffer[: len(chunk)]
