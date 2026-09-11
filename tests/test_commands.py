@@ -12,6 +12,8 @@ syntax error in one fails here rather than only on a CI run this machine
 cannot reach.
 """
 
+import sys
+
 import pytest
 
 import pexpect
@@ -19,6 +21,16 @@ import pexpect
 from . import commands, pexpect_test_case
 
 pytestmark = pytest.mark.usefixtures("fast_sleep", "killed_pty_children")
+
+# spawn(echo=False) raises ExceptionPexpect on Windows, because ConPTY keeps
+# echo in the child's own console host where the parent cannot reach it. The
+# two tests that drive cat need it: cat copies its input back, and with echo
+# on the assertion would see every line twice. What the stand-in does under a
+# console is a question for a machine with one.
+_NEEDS_ECHO_CONTROL = pytest.mark.skipif(
+    sys.platform == "win32",
+    reason="needs echo control: spawn(echo=False) is refused",
+)
 # the program cat(1) may display ^D\x08\x08 when \x04 (EOF, Ctrl-D) is sent
 _CAT_EOF = b"^D\x08\x08"
 
@@ -26,6 +38,7 @@ _CAT_EOF = b"^D\x08\x08"
 class TestCaseCommands(pexpect_test_case.PexpectTestCase):
     """One test per name commands.py exports."""
 
+    @_NEEDS_ECHO_CONTROL
     def test_cat_copies_stdin_to_stdout(self) -> None:
         """CAT echoes back a line sent to it, until EOF."""
         p = pexpect.spawn(commands.CAT, echo=False)
@@ -55,6 +68,7 @@ class TestCaseCommands(pexpect_test_case.PexpectTestCase):
         assert p.wait() == 0
         assert not p.isalive()
 
+    @_NEEDS_ECHO_CONTROL
     def test_cat_py_copies_stdin_to_stdout(self) -> None:
         """The cat.py stand-in, driven directly, echoes back a line until EOF."""
         p = pexpect.spawn(commands._helper("cat.py"), echo=False)

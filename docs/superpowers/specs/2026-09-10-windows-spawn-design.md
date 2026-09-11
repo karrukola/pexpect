@@ -109,13 +109,21 @@ recorded here so they are not rediscovered as pexpect bugs:
   empty read and strips it on the way out only inside the `read()` this
   design bypasses, so a child printing that exact string loses it.
   `PYWINPTY_BLOCK` defaults to `1`, which was first written down here as
-  making the sentinel rare; that was wrong. A blocking native read returns
-  empty at end of file, which is exactly when the sentinel is emitted -- ten
-  bytes on the socket immediately before the FIN, every time a child exits.
-  `read_bytes()` therefore buffers: it reads ahead of the caller's `size`,
-  strips the sentinel from the accumulated buffer, and holds back a tail
-  that is still a possible sentinel. Reading ahead makes the buffer
-  invisible to `select()`, so the backend surface carries `pending()` and
+  making the sentinel rare; that was wrong, or at any rate unsupported. The
+  sentinel is emitted for any falsy native read, and whether a blocking
+  `pty.read()` returns the empty string or raises once the child has gone is
+  not established by anything readable without a Windows machine: it is
+  native code, and their reader thread's `except Exception: break`
+  (winpty/ptyprocess.py:368) means a raise would send nothing at all. So the
+  sentinel may well arrive on the socket immediately before the FIN on every
+  child exit, and `read_bytes()` is written to be correct whether it does or
+  not. It buffers: it reads ahead of the caller's `size`, strips the
+  sentinel from the accumulated buffer, and holds back a tail that is still
+  a possible sentinel -- handing that tail over as ordinary output as soon
+  as a zero-timeout `select()` says nothing more is arriving, since blocking
+  in `recv()` to wait for the rest of a sentinel that may not exist is an
+  unbounded hang. Reading ahead also makes the buffer invisible to
+  `select()`, so the backend surface carries `pending()` and
   `pty_spawn._ready()` consults it.
 * Their reader thread also writes with `socket.send()` rather than
   `sendall()`, so a partial send drops the remainder of a chunk.

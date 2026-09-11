@@ -226,15 +226,22 @@ class PtyProcess:
         handed over, so no output is lost to it. A read that is empty only
         once the sentinel is stripped out is not end of file: it is retried.
 
-        The retry does not spin under the configuration this module assumes.
-        PYWINPTY_BLOCK defaults to 1, which makes the native read block, so
-        the one thing that produces an empty native read is the child exiting
-        -- the sentinel arrives once, immediately before the FIN, and the next
-        recv() here returns empty and ends the loop. Setting PYWINPTY_BLOCK=0
-        makes the reader thread poll and emit the sentinel roughly once a
-        millisecond, which would spin this loop for as long as the child keeps
-        running with nothing to say; this module neither sets nor recommends
-        that.
+        Nor does the retry spin under the configuration this module assumes.
+        PYWINPTY_BLOCK defaults to 1, which makes the native read block, so a
+        falsy native read -- the only thing that produces a sentinel -- should
+        be uncommon while the child has something to say. What happens at the
+        end of file is not established by anything readable from here: their
+        pty.read() is native code, and whether a blocking read returns the
+        empty string or raises once the child has gone is in neither the stub,
+        their Python source nor their tests. If it returns empty, the sentinel
+        arrives immediately before the FIN; if it raises, their reader thread
+        breaks out at winpty/ptyprocess.py:368 and sends nothing at all.
+        Either way this loop terminates, and neither way is assumed.
+
+        Setting PYWINPTY_BLOCK=0 makes the reader thread poll and emit the
+        sentinel roughly once a millisecond, which would spin this loop for as
+        long as the child keeps running with nothing to say; this module
+        neither sets nor recommends that.
         """
         while True:
             ready = self._pending_count()
@@ -310,7 +317,10 @@ class PtyProcess:
             # so fewer units than characters is a short write under all of
             # them, while an equality check against len(data) would raise on
             # every non-ASCII send if the unit is not the one assumed.
-            msg = f"write_bytes() wrote {written} of {len(data)} bytes"
+            msg = (
+                f"write_bytes() reported {written} units written for "
+                f"{len(text)} characters, which is a short write"
+            )
             raise PtyProcessError(msg)
         return len(data)
 

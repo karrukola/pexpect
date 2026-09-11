@@ -289,6 +289,20 @@ guarantee pexpect gives on POSIX, that bytes mode returns exactly what the
 child wrote, does not hold here; a child whose output is really binary is
 better driven with :class:`pexpect.popen_spawn.PopenSpawn`, which reads a pipe.
 
+A read can hold back up to nine bytes for one poll. pywinpty's reader thread
+injects a ten-byte marker into the stream for an empty read, and pexpect has
+to strip it; a chunk ending in what could be the start of that marker is
+therefore withheld until the next read says whether it was one.
+``read_bytes(2000)`` on ``b"Value: 10"`` returns ``b"Value: 1"`` and keeps the
+``0``. The bytes are never lost, and the wait is one poll of the descriptor --
+as soon as that poll reports nothing more arriving, the withheld tail is
+handed over as ordinary output -- but on a quiescent child an
+:meth:`~pexpect.spawn.expect` for a pattern ending in such a byte can see the
+pattern one read later than it would on POSIX. This is a trade rather than a
+defect: the alternative is delivering half a marker, which cannot be taken
+back. Only the bytes ``0``, ``00``, ``001`` and the other prefixes of that
+marker are ever affected.
+
 :class:`pexpect.replwrap.REPLWrapper` does not work at all. Every path into it
 turns echo off -- ``REPLWrapper`` spawns with ``echo=False``, and when handed
 an existing spawn it calls ``setecho(False)`` -- so it raises

@@ -330,7 +330,7 @@ def test_a_short_write_is_reported_rather_than_lost(backend: ModuleType) -> None
     remainder silently.
     """
     child = _child(backend, write=lambda text: len(text) - 1)
-    with pytest.raises(backend.PtyProcessError, match="wrote 4 of 5 bytes"):
+    with pytest.raises(backend.PtyProcessError, match="4 units written for 5 characters"):
         child.write_bytes(b"hello")
 
 

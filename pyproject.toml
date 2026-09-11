@@ -115,15 +115,17 @@ report.exclude_also = [
     "if 0:",
     "if self.debug:",
     "if settings.DEBUG",
-    # One of the two is dead on any given run, and neither can be executed on
-    # the other platform, so a covered platform branch is not a thing either
-    # floor can ask for. What holds them honest instead is that nearly every
-    # branch guarded this way has a test in tests/test_unsupported.py
-    # asserting the behaviour on the platform that reaches it. The one
-    # exception is pty_spawn._ready()'s use_poll guard, which the constructor
-    # makes unreachable by refusing use_poll=True before a spawn exists: it
-    # can only be entered by setting the attribute on a live spawn, so it is a
-    # belt to the constructor's braces and has no test of its own.
+    # One of the two arms is dead on any given run and neither can be executed
+    # on the other platform, so these two entries keep a platform guard from
+    # counting against a floor no single run could meet. That is the whole of
+    # what they do; they are not a statement that the excluded code is tested.
+    # Some of it is: tests/test_unsupported.py asserts the constructor's
+    # refusals, waitnoecho() and interact() from both platforms at once. Some
+    # of it is not: pty_spawn's Windows terminate() arm, the use_poll guard
+    # inside _ready() -- unreachable anyway, since the constructor refuses
+    # use_poll=True before a spawn exists -- and popen_spawn.py's two
+    # `# pragma: win32 cover` blocks, which a different mechanism excludes.
+    # Those are read rather than run until a Windows CI leg runs them.
     "if sys\\.platform == .win32.:",
     "if sys\\.platform != .win32.:",
     "if TYPE_CHECKING:",
