@@ -586,6 +586,16 @@ class spawn(SpawnBase[AnyStr]):
 
     def _ready(self, timeout: float | None) -> bool:
         """Return True when the child fd has data available within *timeout*."""
+        if self.ptyproc.pending():
+            # Output the backend holds but the descriptor no longer shows, and
+            # so as ready as anything select() could report. The Windows
+            # backend reads the socket in chunks larger than the caller's size
+            # -- it has to, to recognise pywinpty's ten-byte sentinel -- so a
+            # read_nonblocking(size=1) leaves 1023 bytes buffered here and a
+            # drained socket behind it; without this the next call would wait
+            # out its whole timeout for data it already has. Always False on
+            # POSIX, where read_bytes() is a plain descriptor read.
+            return True
         if self.use_poll:
             if sys.platform == "win32":
                 # select.poll() does not exist there. select() does, and it

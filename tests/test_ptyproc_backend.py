@@ -11,6 +11,7 @@ import sys
 
 import pytest
 
+import pexpect
 from pexpect import _ptyproc
 
 # The methods and attributes pty_spawn.spawn reaches for. A backend missing
@@ -28,6 +29,7 @@ _REQUIRED = (
     "isalive",
     "isatty",
     "kill",
+    "pending",
     "pid",
     "read_bytes",
     "sendcontrol",
@@ -77,6 +79,32 @@ def test_round_trip_through_the_byte_seam() -> None:
             seen += child.read_bytes(1024)
     finally:
         child.close(force=True)
+    # The loop above ends either because the write came back or because the
+    # per-test timeout killed it, and those look the same in a report without
+    # this: an assertion says which one happened.
+    assert b"ping" in seen.replace(b"\r", b"")
+
+
+class _Buffering:
+    """A backend holding output that select() on its descriptor cannot see."""
+
+    def pending(self) -> bool:
+        """Report the buffered output, as the Windows backend's does."""
+        return True
+
+
+def test_a_buffering_backend_is_reported_ready(monkeypatch: pytest.MonkeyPatch) -> None:
+    """pty_spawn asks the backend before it asks select().
+
+    The Windows backend reads the socket in chunks larger than the caller's
+    size, because pywinpty's ten-byte sentinel cannot be recognised in a
+    one-byte read, and what that leaves buffered is invisible to select().
+    The POSIX backend always answers False, so this is the only way the other
+    half of that branch is exercised on a POSIX run.
+    """
+    child = pexpect.spawn(None)
+    monkeypatch.setattr(child, "ptyproc", _Buffering(), raising=False)
+    assert child._ready(0)
 
 
 def test_windows_backend_refuses_the_termios_calls() -> None:

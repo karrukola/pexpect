@@ -6,11 +6,15 @@ Windows. Both are presented here under one name so that pty_spawn -- which is
 otherwise platform-neutral -- never has to ask which platform it is on.
 
 The surface is ptyprocess's, because that is the one pexpect already used, plus
-two methods ptyprocess does not need. pexpect used to read and write the pty
+three methods ptyprocess does not need. pexpect used to read and write the pty
 with os.read() and os.write() on the descriptor, which is correct for a POSIX
 pty and wrong on Windows, where the descriptor pywinpty hands out is a socket:
 os.read() does not accept one. read_bytes() and write_bytes() are that pair of
-calls, moved to the side of the seam that knows what the descriptor is.
+calls, moved to the side of the seam that knows what the descriptor is. The
+third is pending(), which asks the backend whether it holds output that
+select() on the descriptor would not report -- always no on POSIX, and
+sometimes yes on Windows, where the sentinel pywinpty injects forces a read
+larger than the caller asked for.
 """
 
 from __future__ import annotations
@@ -42,6 +46,17 @@ else:
         def write_bytes(self, data: bytes) -> int:
             """Write *data* to the pty and return the number of bytes taken."""
             return os.write(self.fd, data)
+
+        def pending(self) -> bool:
+            """Whether the backend holds output the descriptor cannot show.
+
+            Always False here: read_bytes() goes straight to the descriptor,
+            so select() on it sees everything there is to see. The Windows
+            backend has to read ahead of the caller's size to recognise the
+            sentinel pywinpty injects, so what it buffers is invisible to
+            select() and pty_spawn._ready() has to ask.
+            """
+            return False
 
 
 __all__ = ["PtyProcess", "PtyProcessError", "use_native_pty_fork"]

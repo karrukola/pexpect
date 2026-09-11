@@ -23,14 +23,24 @@ not hold here.
 That reader thread also writes the literal sentinel b'0011Ignore' into the
 socket for every empty native read, and strips it back out only inside the
 read() method above, which this module does not call. read_bytes() strips it
-instead, from the raw chunk rather than by equality -- the kernel can coalesce
-a sentinel-only send with the next real one -- which means a child that
-prints that exact string still loses it; that defect is inherited from
-pywinpty, not introduced here.
+instead, and does so through a buffer of its own rather than on the chunk the
+caller's size happened to ask for: recognising ten bytes is impossible in a
+one-byte recv(), and read_nonblocking(size=1) -- that parameter's default, and
+what pxssh's login loop uses -- would otherwise hand the sentinel's first
+byte to the caller as child output. Stripping by search rather than by
+equality is for the same reason from the other side: the kernel can coalesce a
+sentinel-only send with the next real one. A child that prints that exact
+string still loses it; that defect is inherited from pywinpty, not introduced
+here.
 
-One more property of the dependency is inherited rather than fixed, recorded
-here so it is not rediscovered as a pexpect bug: each spawn opens a listening
-socket on 127.0.0.1, which a local process could race the connect on.
+Two more properties of the dependency are inherited rather than fixed,
+recorded here so they are not rediscovered as pexpect bugs:
+
+* Each spawn opens a listening socket on 127.0.0.1, which a local process
+  could race the connect on to read another user's child output.
+* The reader thread writes to that socket with socket.send() rather than
+  sendall() (winpty/ptyprocess.py:355), so a partial send silently drops the
+  remainder of a chunk.
 """
 
 from __future__ import annotations
@@ -38,17 +48,24 @@ from __future__ import annotations
 import os
 import signal
 import time
-from typing import TYPE_CHECKING
+from contextlib import contextmanager
+from typing import TYPE_CHECKING, cast
 
 import winpty
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Sequence
+    from collections.abc import Callable, Iterator, Sequence
 
 # The reader thread in winpty/ptyprocess.py writes this into the socket for
 # every empty native read, and only winpty.PtyProcess.read() strips it back
 # out -- see the module docstring for why read_bytes() does not call that.
 _EMPTY_READ_SENTINEL = b"0011Ignore"
+
+# How many bytes read_bytes() asks the socket for, however few the caller
+# wanted. recv() returns as soon as anything at all is available, so asking
+# for more than `size` costs no additional blocking, and asking for at least
+# the sentinel's length is what makes stripping it possible at all.
+_MIN_RECV = 1024
 
 
 class PtyProcessError(Exception):
@@ -60,13 +77,44 @@ class PtyProcessError(Exception):
     """
 
 
+@contextmanager
+def _as_ptyproc_err() -> Iterator[None]:
+    """Re-raise whatever pywinpty throws as PtyProcessError.
+
+    winpty.WinptyError derives from Exception rather than from OSError, and
+    winpty.PtyProcess.write() raises a bare EOFError once the child has gone,
+    so neither is caught by anything pexpect has. This wraps every call into
+    the dependency, which is what makes PtyProcessError's docstring above true
+    rather than aspirational: pty_spawn's own _wrap_ptyprocess_err() catches
+    that type and nothing else.
+    """
+    try:
+        yield
+    except (winpty.WinptyError, EOFError, OSError) as e:
+        raise PtyProcessError(*e.args) from e
+
+
 class PtyProcess:
     """A child running in a ConPTY, presented as pexpect's pty backend."""
 
     def __init__(self, proc: winpty.PtyProcess) -> None:
         self._proc = proc
-        self.pid: int = proc.pid
+        # pywinpty's own PtyProcess copies this straight from winpty.PTY.pid,
+        # which its stub declares Optional[int], so mypy resolves it as
+        # int | None wherever the package is really installed -- the Windows
+        # runner. A spawn() that returned rather than raising has a running
+        # child and so a pid, and pty_spawn copies this to spawn.pid, where
+        # int is the documented type; the cast is that reasoning, written down.
+        self.pid: int = cast("int", proc.pid)
         self.fd: int = proc.fd
+        # What read_bytes() has read from the socket and not yet handed over.
+        # See its docstring: the sentinel is ten bytes and the caller's size
+        # may be one, so reading ahead is not an optimisation but the only way
+        # to recognise it. _peer_closed is the socket's FIN, kept apart from
+        # flag_eof because that one is pexpect's answer to eof() and must not
+        # become True while buffered output is still undelivered.
+        self._buffer = bytearray()
+        self._peer_closed = False
         self.flag_eof = False
         self.terminated = False
         self.status: int | None = None
@@ -109,15 +157,47 @@ class PtyProcess:
             raise PtyProcessError(*e.args) from e
         return cls(proc)
 
+    def _pending_count(self) -> int:
+        """How many buffered bytes read_bytes() would hand over right now.
+
+        Everything in the buffer except a tail that is still a proper prefix
+        of the sentinel. Those bytes are withheld because the reader thread's
+        ten can arrive split across two recv() calls, and half a sentinel
+        delivered is half a sentinel in the caller's expect() buffer for good.
+        Once the socket has closed nothing can arrive to complete such a tail,
+        so it was the child's own output after all and is handed over.
+        """
+        if self._peer_closed:
+            return len(self._buffer)
+        held = min(len(self._buffer), len(_EMPTY_READ_SENTINEL) - 1)
+        while held and self._buffer[-held:] != _EMPTY_READ_SENTINEL[:held]:
+            held -= 1
+        return len(self._buffer) - held
+
+    def pending(self) -> bool:
+        """Whether output is buffered here that select() on the fd cannot see.
+
+        pty_spawn's readiness check asks, because read_bytes() reads the
+        socket in chunks larger than the caller asked for: without this, a
+        read_nonblocking(size=1) would take one byte of a 1024-byte chunk and
+        then time out waiting for a socket that has already been drained.
+        """
+        return self._pending_count() > 0
+
     def read_bytes(self, size: int) -> bytes:
         """Read at most *size* bytes of the child's output.
 
-        Reads the socket pywinpty's reader thread feeds. A genuinely empty
-        read -- the socket has closed -- is end of file, which is what
-        SpawnBase.read_nonblocking's BSD-style arm turns into pexpect's EOF.
-        A read that is empty only once _EMPTY_READ_SENTINEL is stripped out
-        is not: it is retried instead, so the sentinel never reaches
-        SpawnBase's decoder or a caller's expect() pattern.
+        Reads the socket pywinpty's reader thread feeds, through the buffer
+        the sentinel forces on us: recv() is asked for _MIN_RECV bytes or
+        *size*, whichever is larger, the sentinel is stripped from the
+        accumulated buffer, and up to *size* bytes come back from the front
+        of it. What that leaves buffered is what pending() exists to report.
+
+        A genuinely empty read -- the socket has closed -- is end of file,
+        which is what SpawnBase.read_nonblocking's BSD-style arm turns into
+        pexpect's EOF. It is reported only once every buffered byte has been
+        handed over, so no output is lost to it. A read that is empty only
+        once the sentinel is stripped out is not end of file: it is retried.
 
         The retry does not spin under the configuration this module assumes:
         PYWINPTY_BLOCK defaults to 1, which makes the native read block, so
@@ -128,16 +208,33 @@ class PtyProcess:
         neither sets nor recommends that.
         """
         while True:
-            data: bytes = self._proc.fileobj.recv(size)
-            if not data:
+            ready = self._pending_count()
+            if ready:
+                chunk = bytes(self._buffer[: min(size, ready)])
+                del self._buffer[: len(chunk)]
+                return chunk
+            if self._peer_closed:
                 self.flag_eof = True
                 return b""
-            # A chunk that is only the sentinel, and one where the kernel has
-            # coalesced it with the next real chunk, both come through here --
-            # a plain equality check would miss the second case.
-            data = data.replace(_EMPTY_READ_SENTINEL, b"")
+            with _as_ptyproc_err():
+                try:
+                    data: bytes = self._proc.fileobj.recv(max(size, _MIN_RECV))
+                except (ConnectionResetError, ConnectionAbortedError):
+                    # An abortive close of the loopback socket is one of the
+                    # ways a child exit can present on Windows, and it means
+                    # the same thing as the orderly FIN below: there is no
+                    # more output. Reporting it as an error instead would
+                    # turn an ordinary end of file into an exception out of
+                    # expect().
+                    data = b""
             if data:
-                return data
+                self._buffer += data
+                # A sentinel-only chunk, and one the kernel has coalesced with
+                # the next real chunk, both come through here -- a plain
+                # equality check would miss the second case.
+                self._buffer[:] = self._buffer.replace(_EMPTY_READ_SENTINEL, b"")
+            else:
+                self._peer_closed = True
 
     def write_bytes(self, data: bytes) -> int:
         """Write *data* to the child and return the number of bytes taken.
