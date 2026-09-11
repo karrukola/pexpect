@@ -272,7 +272,13 @@ class PtyProcess:
         return len(data)
 
     def isatty(self) -> bool:
-        """Return True: a ConPTY child is always attached to a console."""
+        """Return whether this end of the ConPTY is still open.
+
+        Which is what POSIX's os.isatty(fd) answers: a spawned child is on a
+        console until close() takes the descriptor away. pywinpty's own
+        isatty() returns isalive() instead, so it goes False while the
+        console is still there to be read -- this does not follow it.
+        """
         return not self.closed
 
     @property
@@ -337,7 +343,13 @@ class PtyProcess:
         return self.write_bytes(byte), byte
 
     def getwinsize(self) -> tuple[int, int]:
-        """Return the console size as (rows, cols)."""
+        """Return the console size as (rows, cols).
+
+        pywinpty answers from the value it cached the last time it was told
+        (winpty/ptyprocess.py:334), not from the console, so a resize the
+        child performed for itself is not reflected here. The POSIX backend
+        reads the real ioctl and would show it.
+        """
         with _as_ptyproc_err():
             rows, cols = self._proc.getwinsize()
         return rows, cols
@@ -400,13 +412,20 @@ class PtyProcess:
         return False
 
     def kill(self, sig: int) -> None:
-        """Send *sig* to the child, for the two signals Windows can deliver.
+        """Send *sig* to the child, for the two signals this accepts.
 
-        os.kill() on Windows delivers CTRL_C_EVENT and CTRL_BREAK_EVENT through
-        GenerateConsoleCtrlEvent and treats every other value as a
-        TerminateProcess exit code, so a SIGHUP here would terminate the child
-        rather than hang it up. Refusing is the honest answer; the caller who
-        wants an interrupt has sendintr().
+        os.kill() on Windows recognises exactly two values, CTRL_C_EVENT and
+        CTRL_BREAK_EVENT, which it delivers through GenerateConsoleCtrlEvent,
+        and treats every other value as a TerminateProcess exit code -- so a
+        SIGHUP here would terminate the child rather than hang it up, which is
+        why anything not named below is refused.
+
+        Those two are refused as well, and SIGINT accepted in their place.
+        SIGINT is what a pexpect caller already writes for an interrupt, and
+        it goes to the child as Ctrl-C written into the ConPTY rather than as
+        a console control event delivered to whatever shares the child's
+        process group; one spelling for one behaviour is worth more than three
+        spellings for two. SIGTERM is TerminateProcess, deliberately.
         """
         if sig not in (signal.SIGTERM, signal.SIGINT):
             msg = f"kill() cannot deliver signal {sig} on Windows"

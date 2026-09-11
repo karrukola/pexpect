@@ -117,9 +117,13 @@ report.exclude_also = [
     "if settings.DEBUG",
     # One of the two is dead on any given run, and neither can be executed on
     # the other platform, so a covered platform branch is not a thing either
-    # floor can ask for. What holds them honest instead is that every branch
-    # guarded this way has a test in tests/test_unsupported.py asserting the
-    # behaviour on the platform that reaches it.
+    # floor can ask for. What holds them honest instead is that nearly every
+    # branch guarded this way has a test in tests/test_unsupported.py
+    # asserting the behaviour on the platform that reaches it. The one
+    # exception is pty_spawn._ready()'s use_poll guard, which the constructor
+    # makes unreachable by refusing use_poll=True before a spawn exists: it
+    # can only be entered by setting the attribute on a live spawn, so it is a
+    # belt to the constructor's braces and has no test of its own.
     "if sys\\.platform == .win32.:",
     "if sys\\.platform != .win32.:",
     "if TYPE_CHECKING:",

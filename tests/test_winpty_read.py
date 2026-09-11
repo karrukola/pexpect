@@ -37,7 +37,7 @@ import pytest
 import pexpect
 
 if TYPE_CHECKING:
-    from collections.abc import Sequence
+    from collections.abc import Callable, Sequence
 
 # winpty/ptyprocess.py:353: `data = pty.read(blocking=blocking) or '0011Ignore'`,
 # sent as UTF-8 on the line below it. Ten bytes, which is why a one-byte read
@@ -101,13 +101,19 @@ def backend(monkeypatch: pytest.MonkeyPatch) -> ModuleType:
     return module
 
 
-def _child(backend: ModuleType, *chunks: bytes) -> Any:  # noqa: ANN401
-    """Return the backend reading a socket that sends *chunks* and then closes.
+def _child(
+    backend: ModuleType,
+    *chunks: bytes,
+    write: Callable[[str], int] | None = None,
+) -> Any:  # noqa: ANN401
+    """Return the backend over a socket that sends *chunks* and then closes.
 
     The pid and fd are the two attributes ``__init__`` copies off the pywinpty
-    process; nothing in the read path looks at either.
+    process; nothing in the read path looks at either. *write* stands in for
+    winpty.PtyProcess.write(), whose return value is the only thing the write
+    path cannot reason about from the source -- see the tests that use it.
     """
-    proc = SimpleNamespace(fileobj=_Socket(chunks), pid=4321, fd=7)
+    proc = SimpleNamespace(fileobj=_Socket(chunks), pid=4321, fd=7, write=write)
     return backend.PtyProcess(proc)
 
 
@@ -211,3 +217,41 @@ def test_any_other_socket_error_becomes_a_backend_error(backend: ModuleType) -> 
     with pytest.raises(backend.PtyProcessError, match="not a socket"):
         child.read_bytes(1024)
     assert not child.flag_eof
+
+
+def test_a_short_write_is_reported_rather_than_lost(backend: ModuleType) -> None:
+    """A write the backend did not take in full must not be reported as one.
+
+    send() returns a byte count its caller is entitled to believe, and
+    pexpect has no resend: a short write reported as a complete one loses the
+    remainder silently.
+    """
+    child = _child(backend, write=lambda text: len(text) - 1)
+    with pytest.raises(backend.PtyProcessError, match="wrote 4 of 5 bytes"):
+        child.write_bytes(b"hello")
+
+
+def test_a_write_counted_in_a_wider_unit_is_not_short(backend: ModuleType) -> None:
+    """Non-ASCII must not be mistaken for a short write.
+
+    pywinpty declares PTY.write() as returning an int and documents no unit
+    for it; the check is against the character count for that reason, since
+    every candidate encoding spends at least one unit per character. Here the
+    stand-in counts UTF-8 bytes, so it returns six for five characters.
+    """
+    child = _child(backend, write=lambda text: len(text.encode()))
+    payload = "h\u00e9llo".encode()
+    assert child.write_bytes(payload) == len(payload)
+
+
+def test_bytes_that_are_not_utf8_are_refused(backend: ModuleType) -> None:
+    """The payload cannot survive pywinpty's str parameter, so it is refused.
+
+    PTY.write() takes a Rust str by way of PyUnicode_AsUTF8AndSize with
+    surrogatepass, which either rejects a lone surrogate or re-encodes it as
+    three-byte WTF-8. Refusing up front beats a bare UnicodeEncodeError from
+    inside the dependency or silent corruption on the wire.
+    """
+    child = _child(backend, write=len)
+    with pytest.raises(backend.PtyProcessError, match="non-UTF-8"):
+        child.write_bytes(b"\xff")
